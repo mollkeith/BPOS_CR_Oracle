@@ -1,0 +1,59 @@
+帮忙用go实现如下应用：
+
+简要介绍：需要定期将主链bpos及cr信息，更新到合约中
+
+1. 支持配置文件配置参数：
+文件名：config.json
+CR信息合约地址：0x****
+BPoS节点信息合约地址： 0x*****
+主链rpc: https://api.elastos.io/ela
+pg链rpc：https://api.elastos.io/pg
+定期：1 天
+email列表：[abc@gamil.com, def@qq.com] 等信息，详细见第4标题 email相关配置
+
+2. 支持定期更新
+步骤：
+（1）根据docs/jsonrpc.md 定期获取bpos及cr信息
+（2）调用合约abi进行更新
+（3）更新cr：如果cr人员信息有变更，则更新需要用 setNodes 方法。
+    cr有变更是当前rpc查到的和当前合约拿到的cr列表不一样，否则不用更新（这里需要从合约获取列表，然后和从cr拿到的对比）。
+    因为setNodes里只关心cr的ownerPK, bposPK, NickName（bposPK就是rpc里拿到的nodepublickey），比较时只关心这三个是否有变动，和顺序无关。
+    因为cr是批量一次更新，只需要有任意一个cr的ownerPK, bposPK, NickName之一有变动就需要更新
+    rpc使用：listcurrentcrs
+    合约使用：getAllNodes + setNodes
+（3）更新bpos：更新需要用 updateNodes 方法
+    bpos节点信息有变更是当前rpc查到的和合约拿到的bpos节点列表不一样，否则不用更新（这里需要从合约获取列表，然后和从cr拿到的对比）。
+    因为updateNodes里只关心cr的ownerPK, bposPK, NickName，votes（bposPK就是rpc里拿到的nodepublickey），比较时只关心这四个是否有变动，和顺序无关。
+    rpc使用：listproducers
+    合约使用：getAllNodes + updateNodes
+（4）定期更新，定期时间间隔从配置文件获取
+
+3. 静态网页展示
+    提交完的信息需要出来一个静态页面，将提交的信息展示出来，页面需要美观 直观。
+    显示内容包括：
+    （1）展示合约当前cr列表
+    （2）展示合约当前bpos列表，bpos要根据votes排名展示，因为是参考的bsc的方案，前25名中随机选中20个，25名之后的随机选4个，可以标注一下分层以及随机选中的概率。
+    （3）展示今日是否有变更，检查时间，变更时间记录，以及合理且明显的美观的方式展示其变更了哪些具体信息，比如某个bpos节点或者cr变更了，让查看的人能直观看到。
+
+4. 邮件提醒
+    每天将提交信息发邮件到邮件地址，提交出错也需要发送，因为可能没有balance等情况
+    配置参考：但是需要考虑安全性，不能把死吗啥的放代码里，只能是config文件里，config最好是config.json这样的格式
+    "enabled": true,
+    "from": {
+      "address": "noreply@belayer2.org",
+      "password": "YOUR_PASSWORD_HERE"
+    },
+    "to": [
+      "mollkeith.elastos@gmail.com"
+    ],
+    "smtp": {
+      "host": "smtppro.zoho.com",
+      "port": 587,
+      "secure": false,
+      "tls": true
+    },
+    "proxy": {
+      "enabled": false,
+      "url": "http://127.0.0.1:10900"
+    },
+    "retries": 3,
