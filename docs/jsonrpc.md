@@ -16,10 +16,10 @@ Show current cr members information
 | nickname        | string | the nick name of the cr member        |
 | url             | string | the url of the cr member              |
 | location        | uint64 | the location number of the cr member  |
-| impeachmentvotes| int64  | impeachment votes of the cr member    |
+| impeachmentvotes| string  | impeachment votes of the cr member    |
 | depositamount   | string | the deposite amout of the cr member   |
 | depositaddress  | string | the deposite address of the cr member |
-| penalty         | int64  | the penalty of the cr member          |
+| penalty         | string  | the penalty of the cr member          |
 | index           | uint64 | the index of the cr member            |
 | totalcounts     | uint64 | the total counts of current cr member |
 
@@ -51,10 +51,10 @@ Response:
                 "nickname": "ela_cr2",
                 "url": "ela_cr2.org",
                 "location": 112211, 
-                "impeachmentvotes": 0,
+                "impeachmentvotes": "0.2",
                 "depositamout": "5000",
                 "deposithash": "De87Qiekzpx7Xqf8RphdwNX5Z84iGgHLKMF5b",
-                "penalty": 0,
+                "penalty": "1.1",
                 "index": 0,
                 "State": "Elected"
             },
@@ -65,10 +65,10 @@ Response:
                 "nickname": "ela_cr1",
                 "url": "ela_cr1.org",
                 "location": 112211,
-                "impeachmentvotes": 0,
+                "impeachmentvotes": "0.1",
                 "depositamout": "5000",
                 "depositaddress": "DnemZpPgHLKMF5bMX3WbJYSGTpqJkBN7pe",
-                "penalty": 0,
+                "penalty": "0.2",
                 "index": 1,
                 "State": "Elected"
             }

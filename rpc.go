@@ -82,10 +82,10 @@ type CRMember struct {
 	Nickname        string `json:"nickname"`
 	URL             string `json:"url"`
 	Location        uint64 `json:"location"`
-	ImpeachmentVotes int64  `json:"impeachmentvotes"`
+	ImpeachmentVotes string `json:"impeachmentvotes"` // 字符串类型
 	DepositAmount   string `json:"depositamount"`
 	DepositAddress  string `json:"depositaddress"`
-	Penalty         int64  `json:"penalty"`
+	Penalty         string `json:"penalty"` // 字符串类型
 	Index           uint64 `json:"index"`
 	State           string `json:"State"`
 }

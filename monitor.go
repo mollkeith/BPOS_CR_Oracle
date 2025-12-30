@@ -9,14 +9,15 @@ import (
 )
 
 type Monitor struct {
-	config          *Config
-	mainRPC         *RPCClient
-	pgRPC           *RPCClient
-	crContract      *CRPoolContract
-	bposContract    *BPoSPoolContract
-	lastCheckTime   time.Time
-	lastUpdateTime  time.Time
-	changeHistory   []ChangeRecord
+	config         *Config
+	mainRPC        *RPCClient
+	pgRPC          *RPCClient
+	crContract     *CRPoolContract
+	bposContract   *BPoSPoolContract
+	contractClient *ContractClient
+	lastCheckTime  time.Time
+	lastUpdateTime time.Time
+	changeHistory  []ChangeRecord
 }
 
 type ChangeRecord struct {
@@ -50,13 +51,24 @@ func NewMonitor(config *Config, password string) (*Monitor, error) {
 	}
 
 	return &Monitor{
-		config:        config,
-		mainRPC:      mainRPC,
-		pgRPC:        pgRPC,
-		crContract:   crContract,
-		bposContract: bposContract,
-		changeHistory: make([]ChangeRecord, 0),
+		config:         config,
+		mainRPC:        mainRPC,
+		pgRPC:          pgRPC,
+		crContract:     crContract,
+		bposContract:   bposContract,
+		contractClient: contractClient,
+		changeHistory:  make([]ChangeRecord, 0),
 	}, nil
+}
+
+// GetWalletInfo 获取钱包地址和余额
+func (m *Monitor) GetWalletInfo() (string, *big.Int, error) {
+	address := m.contractClient.GetAddress()
+	balance, err := m.contractClient.GetBalance()
+	if err != nil {
+		return "", nil, err
+	}
+	return address.Hex(), balance, nil
 }
 
 // CheckAndUpdate 检查并更新 CR 和 BPoS 信息
@@ -96,10 +108,25 @@ func (m *Monitor) checkAndUpdateCR() (bool, error) {
 		return false, fmt.Errorf("failed to get CRs from RPC: %w", err)
 	}
 
+	// 打印 RPC 获取到的 CR 结果
+	log.Printf("RPC CR Results: Total %d CRs", len(rpcCRs))
+	for i, cr := range rpcCRs {
+		log.Printf("  CR[%d]: Nickname=%s, CID=%s, ImpeachmentVotes=%s, Penalty=%s, State=%s",
+			i, cr.Nickname, cr.CID, cr.ImpeachmentVotes, cr.Penalty, cr.State)
+	}
+
 	// 从合约获取当前 CR 列表
 	contractCRs, err := m.crContract.GetAllNodes()
 	if err != nil {
+		log.Printf("Warning: failed to get CRs from contract (contract may be empty or not initialized): %v", err)
 		return false, fmt.Errorf("failed to get CRs from contract: %w", err)
+	}
+
+	// 打印合约获取到的 CR 结果
+	log.Printf("Contract CR Results: Total %d CRs", len(contractCRs))
+	for i, cr := range contractCRs {
+		log.Printf("  Contract CR[%d]: Nickname=%s, OwnerPK=%s, DPoSPK=%s, Exists=%v",
+			i, cr.NickName, hex.EncodeToString(cr.OwnerPublicKey), hex.EncodeToString(cr.DPoSPublicKey), cr.Exists)
 	}
 
 	// 比较是否有变化
@@ -114,7 +141,7 @@ func (m *Monitor) checkAndUpdateCR() (bool, error) {
 
 	for _, cr := range rpcCRs {
 		nickNames = append(nickNames, cr.Nickname)
-		
+
 		ownerPK, err := hexToBytes(cr.Code)
 		if err != nil {
 			log.Printf("Warning: failed to parse owner public key for CR %s: %v", cr.Nickname, err)
@@ -129,12 +156,12 @@ func (m *Monitor) checkAndUpdateCR() (bool, error) {
 	}
 
 	// 调用合约更新
-	tx, err := m.crContract.SetNodes(nickNames, ownerPublicKeys, dposPublicKeys)
+	txHash, err := m.crContract.SetNodes(nickNames, ownerPublicKeys, dposPublicKeys)
 	if err != nil {
 		return false, fmt.Errorf("failed to call setNodes: %w", err)
 	}
 
-	log.Printf("CR update transaction sent: %s", tx.Hash().Hex())
+	log.Printf("CR update transaction sent: %s", txHash.Hex())
 
 	// 记录变更
 	m.changeHistory = append(m.changeHistory, ChangeRecord{
@@ -196,10 +223,24 @@ func (m *Monitor) checkAndUpdateBPoS() (bool, error) {
 		return false, fmt.Errorf("failed to get producers from RPC: %w", err)
 	}
 
+	// 打印 RPC 获取到的 BPoS 结果
+	log.Printf("RPC BPoS Results: Total %d Producers", len(rpcProducers))
+	for i, producer := range rpcProducers {
+		log.Printf("  BPoS[%d]: Nickname=%s, OwnerPK=%s, NodePK=%s, Votes=%s, State=%s, Active=%v",
+			i, producer.Nickname, producer.OwnerPublicKey, producer.NodePublicKey, producer.Votes, producer.State, producer.Active)
+	}
+
 	// 从合约获取当前 BPoS 节点列表
 	contractNodes, err := m.bposContract.GetAllNodes()
 	if err != nil {
 		return false, fmt.Errorf("failed to get BPoS nodes from contract: %w", err)
+	}
+
+	// 打印合约获取到的 BPoS 结果
+	log.Printf("Contract BPoS Results: Total %d Nodes", len(contractNodes))
+	for i, node := range contractNodes {
+		log.Printf("  Contract BPoS[%d]: Nickname=%s, OwnerPK=%s, DPoSPK=%s, Votes=%s, Exists=%v",
+			i, node.NickName, hex.EncodeToString(node.OwnerPublicKey), hex.EncodeToString(node.DPoSPublicKey), node.Votes.String(), node.Exists)
 	}
 
 	// 比较是否有变化
@@ -239,12 +280,12 @@ func (m *Monitor) checkAndUpdateBPoS() (bool, error) {
 	}
 
 	// 调用合约更新
-	tx, err := m.bposContract.UpdateNodes(ownerPublicKeys, nickNames, dposPublicKeys, votes)
+	txHash, err := m.bposContract.UpdateNodes(ownerPublicKeys, nickNames, dposPublicKeys, votes)
 	if err != nil {
 		return false, fmt.Errorf("failed to call updateNodes: %w", err)
 	}
 
-	log.Printf("BPoS update transaction sent: %s", tx.Hash().Hex())
+	log.Printf("BPoS update transaction sent: %s", txHash.Hex())
 
 	// 记录变更
 	m.changeHistory = append(m.changeHistory, ChangeRecord{
@@ -312,7 +353,7 @@ func (m *Monitor) bposHasChanges(rpcProducers []Producer, contractNodes []BPoSNo
 // GetStatus 获取监控状态
 func (m *Monitor) GetStatus() map[string]interface{} {
 	return map[string]interface{}{
-		"last_check_time":  m.lastCheckTime,
+		"last_check_time":   m.lastCheckTime,
 		"last_update_time":  m.lastUpdateTime,
 		"change_count":      len(m.changeHistory),
 		"has_changes_today": m.hasChangesToday(),
@@ -323,7 +364,7 @@ func (m *Monitor) GetStatus() map[string]interface{} {
 func (m *Monitor) hasChangesToday() bool {
 	today := time.Now().Truncate(24 * time.Hour)
 	for _, record := range m.changeHistory {
-		if record.Time.Truncate(24*time.Hour).Equal(today) {
+		if record.Time.Truncate(24 * time.Hour).Equal(today) {
 			return true
 		}
 	}
@@ -334,4 +375,3 @@ func (m *Monitor) hasChangesToday() bool {
 func (m *Monitor) GetChangeHistory() []ChangeRecord {
 	return m.changeHistory
 }
-

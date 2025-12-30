@@ -2,21 +2,37 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
+	"math/big"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"golang.org/x/term"
 )
 
 func main() {
 	configPath := flag.String("config", "config.json", "Path to configuration file")
-	password := flag.String("p", "", "Keystore password (required)")
+	password := flag.String("p", "", "Keystore password (optional, will prompt if not provided)")
 	flag.Parse()
 
-	// 检查密码是否提供
+	// 如果密码未提供，提示用户输入
+	var passwd string
 	if *password == "" {
-		log.Fatal("Error: keystore password is required. Use -p flag to provide password.")
+		fmt.Print("Enter keystore password: ")
+		passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
+		if err != nil {
+			log.Fatalf("Failed to read password: %v", err)
+		}
+		fmt.Println() // 换行
+		passwd = string(passwordBytes)
+		if passwd == "" {
+			log.Fatal("Error: keystore password cannot be empty.")
+		}
+	} else {
+		passwd = *password
 	}
 
 	// 加载配置
@@ -26,7 +42,7 @@ func main() {
 	}
 
 	// 创建监控器
-	monitor, err := NewMonitor(config, *password)
+	monitor, err := NewMonitor(config, passwd)
 	if err != nil {
 		log.Fatalf("Failed to create monitor: %v", err)
 	}
@@ -38,6 +54,17 @@ func main() {
 	interval, err := config.GetUpdateInterval()
 	if err != nil {
 		log.Fatalf("Invalid update interval: %v", err)
+	}
+
+	// 获取并打印钱包信息
+	walletAddress, balance, err := monitor.GetWalletInfo()
+	if err != nil {
+		log.Printf("Warning: failed to get wallet info: %v", err)
+	} else {
+		// 将余额从 Wei 转换为 ELA (假设 1 ELA = 10^18 Wei，类似以太坊)
+		elaBalance := new(big.Float).Quo(new(big.Float).SetInt(balance), big.NewFloat(1e18))
+		log.Printf("Wallet Address: %s", walletAddress)
+		log.Printf("Wallet Balance: %s ELA (Wei: %s)", elaBalance.Text('f', 8), balance.String())
 	}
 
 	log.Printf("Monitor started with update interval: %v", interval)

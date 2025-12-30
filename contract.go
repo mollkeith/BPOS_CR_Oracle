@@ -5,33 +5,37 @@ import (
 	"crypto/ecdsa"
 	"encoding/hex"
 	"fmt"
-	"os"
+	"log"
 	"math/big"
+	"os"
 	"strings"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rlp"
+
+	"bpos_cr_monitor/contract"
 )
 
 type ContractClient struct {
-	client     *ethclient.Client
-	privateKey *ecdsa.PrivateKey
-	chainID    *big.Int
+	crossClient *contract.CrossClient
+	privateKey  *ecdsa.PrivateKey
+	chainID     *big.Int
 }
 
 // NewContractClientFromKeystore 从 keystore 文件创建合约客户端
 func NewContractClientFromKeystore(rpcURL, keystorePath, password string) (*ContractClient, error) {
-	client, err := ethclient.Dial(rpcURL)
+	crossClient, err := contract.ConnectRPC(rpcURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to RPC: %w", err)
 	}
 
-	chainID, err := client.NetworkID(context.Background())
+	chainID, err := crossClient.ChainID(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get chain ID: %w", err)
 	}
@@ -49,20 +53,20 @@ func NewContractClientFromKeystore(rpcURL, keystorePath, password string) (*Cont
 	}
 
 	return &ContractClient{
-		client:     client,
-		privateKey: key.PrivateKey,
-		chainID:    chainID,
+		crossClient: crossClient,
+		privateKey:  key.PrivateKey,
+		chainID:     chainID,
 	}, nil
 }
 
 // NewContractClient 从私钥字符串创建合约客户端 (保留向后兼容)
 func NewContractClient(rpcURL, privateKeyHex string) (*ContractClient, error) {
-	client, err := ethclient.Dial(rpcURL)
+	crossClient, err := contract.ConnectRPC(rpcURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to RPC: %w", err)
 	}
 
-	chainID, err := client.NetworkID(context.Background())
+	chainID, err := crossClient.ChainID(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get chain ID: %w", err)
 	}
@@ -80,9 +84,9 @@ func NewContractClient(rpcURL, privateKeyHex string) (*ContractClient, error) {
 	}
 
 	return &ContractClient{
-		client:     client,
-		privateKey: privateKey,
-		chainID:    chainID,
+		crossClient: crossClient,
+		privateKey:  privateKey,
+		chainID:     chainID,
 	}, nil
 }
 
@@ -92,13 +96,13 @@ func (c *ContractClient) GetAuth() (*bind.TransactOpts, error) {
 		return nil, err
 	}
 
-	nonce, err := c.client.PendingNonceAt(context.Background(), crypto.PubkeyToAddress(c.privateKey.PublicKey))
+	nonce, err := c.crossClient.PendingNonceAt(context.Background(), crypto.PubkeyToAddress(c.privateKey.PublicKey))
 	if err != nil {
 		return nil, err
 	}
 	auth.Nonce = big.NewInt(int64(nonce))
 
-	gasPrice, err := c.client.SuggestGasPrice(context.Background())
+	gasPrice, err := c.crossClient.SuggestGasPrice(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -108,21 +112,46 @@ func (c *ContractClient) GetAuth() (*bind.TransactOpts, error) {
 	return auth, nil
 }
 
+// GetAddress 获取钱包地址
+func (c *ContractClient) GetAddress() common.Address {
+	return crypto.PubkeyToAddress(c.privateKey.PublicKey)
+}
+
+// GetBalance 获取钱包余额
+func (c *ContractClient) GetBalance() (*big.Int, error) {
+	address := c.GetAddress()
+	balance, err := c.crossClient.GetBalance(context.Background(), address)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get balance: %w", err)
+	}
+	return balance, nil
+}
+
+// ContractExists 检查合约是否存在
+func (c *ContractClient) ContractExists(address common.Address) (bool, error) {
+	code, err := c.crossClient.GetCode(context.Background(), address)
+	if err != nil {
+		return false, fmt.Errorf("failed to get contract code: %w", err)
+	}
+	// code 是 hex 字符串，如果为 "0x" 或 "0x0" 表示合约不存在
+	return code != "" && code != "0x" && code != "0x0", nil
+}
+
 // CRNode 表示合约中的 CR 节点
 type CRNode struct {
-	NickName      string
+	NickName       string
 	OwnerPublicKey []byte
-	DPoSPublicKey []byte
-	Exists        bool
+	DPoSPublicKey  []byte
+	Exists         bool
 }
 
 // BPoSNode 表示合约中的 BPoS 节点
 type BPoSNode struct {
-	NickName      string
+	NickName       string
 	OwnerPublicKey []byte
-	DPoSPublicKey []byte
-	Votes         *big.Int
-	Exists        bool
+	DPoSPublicKey  []byte
+	Votes          *big.Int
+	Exists         bool
 }
 
 // CRPoolContract CR 合约接口
@@ -152,30 +181,76 @@ func NewCRPoolContract(client *ContractClient, address string) (*CRPoolContract,
 
 // GetAllNodes 获取所有 CR 节点
 func (c *CRPoolContract) GetAllNodes() ([]CRNode, error) {
-	contract := bind.NewBoundContract(c.address, c.abi, c.client, c.client, c.client)
-	
-	type nodeResult struct {
-		NickName      string
-		OwnerPublicKey []byte
-		DPoSPublicKey []byte
-		Exists        bool
-	}
-	
-	var result []nodeResult
+	ctx := context.Background()
 
-	opts := &bind.CallOpts{Context: context.Background()}
-	err := contract.Call(opts, &result, "getAllNodes")
+	// 先检查合约是否存在
+	exists, err := c.ContractExists(c.address)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call getAllNodes: %w", err)
+		return nil, fmt.Errorf("failed to check if contract exists: %w", err)
+	}
+	if !exists {
+		log.Printf("Contract at %s does not exist, returning empty array", c.address.Hex())
+		return nil, fmt.Errorf("contract at %s does not exist", c.address.Hex())
 	}
 
-	nodes := make([]CRNode, len(result))
-	for i, r := range result {
+	// 检查方法是否存在
+	method, ok := c.abi.Methods["getAllNodes"]
+	if !ok {
+		return nil, fmt.Errorf("method getAllNodes not found in ABI")
+	}
+
+	// 构造调用数据
+	data, err := c.abi.Pack("getAllNodes")
+	if err != nil {
+		return nil, fmt.Errorf("failed to pack method getAllNodes: %w", err)
+	}
+
+	// 调用合约（使用 crossClient）
+	msg := ethereum.CallMsg{
+		To:   &c.address,
+		Data: data,
+	}
+	result, err := c.crossClient.CallContract(ctx, msg, nil)
+	if err != nil {
+		// 如果调用失败，返回错误，因为拿不到数据不能提交
+		return nil, fmt.Errorf("failed to call contract getAllNodes at %s: %w", c.address.Hex(), err)
+	}
+
+	// 如果结果为空，返回空数组
+	if len(result) == 0 {
+		return make([]CRNode, 0), nil
+	}
+
+	// 解包结果
+	type nodeResult struct {
+		NickName       string
+		OwnerPublicKey []byte
+		DPoSPublicKey  []byte
+		Exists         bool
+	}
+
+	var nodesResult []nodeResult
+	unpacked, err := method.Outputs.Unpack(result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unpack result: %w", err)
+	}
+
+	// 转换结果
+	if len(unpacked) > 0 {
+		if nodes, ok := unpacked[0].([]nodeResult); ok {
+			nodesResult = nodes
+		} else {
+			return nil, fmt.Errorf("unexpected result type: %T", unpacked[0])
+		}
+	}
+
+	nodes := make([]CRNode, len(nodesResult))
+	for i, r := range nodesResult {
 		nodes[i] = CRNode{
-			NickName:      r.NickName,
+			NickName:       r.NickName,
 			OwnerPublicKey: r.OwnerPublicKey,
-			DPoSPublicKey: r.DPoSPublicKey,
-			Exists:        r.Exists,
+			DPoSPublicKey:  r.DPoSPublicKey,
+			Exists:         r.Exists,
 		}
 	}
 
@@ -183,20 +258,75 @@ func (c *CRPoolContract) GetAllNodes() ([]CRNode, error) {
 }
 
 // SetNodes 设置 CR 节点
-func (c *CRPoolContract) SetNodes(nickNames []string, ownerPublicKeys [][]byte, dposPublicKeys [][]byte) (*types.Transaction, error) {
-	auth, err := c.GetAuth()
+func (c *CRPoolContract) SetNodes(nickNames []string, ownerPublicKeys [][]byte, dposPublicKeys [][]byte) (common.Hash, error) {
+	ctx := context.Background()
+	from := c.GetAddress()
+
+	// 使用 ABI 打包方法调用数据
+	data, err := c.abi.Pack("setNodes", nickNames, ownerPublicKeys, dposPublicKeys)
 	if err != nil {
-		return nil, err
+		return common.Hash{}, fmt.Errorf("failed to pack setNodes: %w", err)
 	}
 
-	contract := bind.NewBoundContract(c.address, c.abi, c.client, c.client, c.client)
-	
-	tx, err := contract.Transact(auth, "setNodes", nickNames, ownerPublicKeys, dposPublicKeys)
+	// 获取 gasPrice
+	gasPrice, err := c.crossClient.SuggestGasPrice(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call setNodes: %w", err)
+		return common.Hash{}, fmt.Errorf("failed to get gas price: %w", err)
 	}
 
-	return tx, nil
+	// 估算 gas
+	msg := ethereum.CallMsg{
+		From:     from,
+		To:       &c.address,
+		Data:     data,
+		GasPrice: gasPrice,
+		Value:    big.NewInt(0),
+	}
+	gasLimit, err := c.crossClient.EstimateGas(ctx, msg)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("failed to estimate gas: %w", err)
+	}
+	gasLimit = gasLimit + gasLimit*2/10 // 增加 20% 的 gas
+
+	// 获取 nonce
+	nonce, err := c.crossClient.PendingNonceAt(ctx, from)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("failed to get nonce: %w", err)
+	}
+
+	// 创建交易
+	tx := types.NewTx(&types.LegacyTx{
+		Nonce:    nonce,
+		To:       &c.address,
+		Value:    big.NewInt(0),
+		Gas:      gasLimit,
+		GasPrice: gasPrice,
+		Data:     data,
+	})
+
+	// 签名交易
+	signer, err := bind.NewKeyedTransactorWithChainID(c.privateKey, c.chainID)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("failed to create signer: %w", err)
+	}
+	signedTx, err := signer.Signer(from, tx)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("failed to sign transaction: %w", err)
+	}
+
+	// 编码交易
+	rawTx, err := rlp.EncodeToBytes(signedTx)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("failed to encode transaction: %w", err)
+	}
+
+	// 发送交易
+	txHash, err := c.crossClient.SendRawTransaction(ctx, rawTx)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("failed to send transaction: %w", err)
+	}
+
+	return txHash, nil
 }
 
 // BPoSPoolContract BPoS 合约接口
@@ -226,32 +356,78 @@ func NewBPoSPoolContract(client *ContractClient, address string) (*BPoSPoolContr
 
 // GetAllNodes 获取所有 BPoS 节点
 func (c *BPoSPoolContract) GetAllNodes() ([]BPoSNode, error) {
-	contract := bind.NewBoundContract(c.address, c.abi, c.client, c.client, c.client)
-	
-	type nodeResult struct {
-		NickName      string
-		OwnerPublicKey []byte
-		DPoSPublicKey []byte
-		Votes         *big.Int
-		Exists        bool
-	}
-	
-	var result []nodeResult
+	ctx := context.Background()
 
-	opts := &bind.CallOpts{Context: context.Background()}
-	err := contract.Call(opts, &result, "getAllNodes")
+	// 先检查合约是否存在
+	exists, err := c.ContractExists(c.address)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call getAllNodes: %w", err)
+		return nil, fmt.Errorf("failed to check if contract exists: %w", err)
+	}
+	if !exists {
+		log.Printf("Contract at %s does not exist, returning empty array", c.address.Hex())
+		return nil, fmt.Errorf("contract at %s does not exist", c.address.Hex())
 	}
 
-	nodes := make([]BPoSNode, len(result))
-	for i, r := range result {
+	// 检查方法是否存在
+	method, ok := c.abi.Methods["getAllNodes"]
+	if !ok {
+		return nil, fmt.Errorf("method getAllNodes not found in ABI")
+	}
+
+	// 构造调用数据
+	data, err := c.abi.Pack("getAllNodes")
+	if err != nil {
+		return nil, fmt.Errorf("failed to pack method getAllNodes: %w", err)
+	}
+
+	// 调用合约（使用 crossClient）
+	msg := ethereum.CallMsg{
+		To:   &c.address,
+		Data: data,
+	}
+	result, err := c.crossClient.CallContract(ctx, msg, nil)
+	if err != nil {
+		// 如果调用失败，返回错误，因为拿不到数据不能提交
+		return nil, fmt.Errorf("failed to call contract getAllNodes at %s: %w", c.address.Hex(), err)
+	}
+
+	// 如果结果为空，返回空数组
+	if len(result) == 0 {
+		return make([]BPoSNode, 0), nil
+	}
+
+	// 解包结果
+	type nodeResult struct {
+		NickName       string
+		OwnerPublicKey []byte
+		DPoSPublicKey  []byte
+		Votes          *big.Int
+		Exists         bool
+	}
+
+	var nodesResult []nodeResult
+	unpacked, err := method.Outputs.Unpack(result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unpack result: %w", err)
+	}
+
+	// 转换结果
+	if len(unpacked) > 0 {
+		if nodes, ok := unpacked[0].([]nodeResult); ok {
+			nodesResult = nodes
+		} else {
+			return nil, fmt.Errorf("unexpected result type: %T", unpacked[0])
+		}
+	}
+
+	nodes := make([]BPoSNode, len(nodesResult))
+	for i, r := range nodesResult {
 		nodes[i] = BPoSNode{
-			NickName:      r.NickName,
+			NickName:       r.NickName,
 			OwnerPublicKey: r.OwnerPublicKey,
-			DPoSPublicKey: r.DPoSPublicKey,
-			Votes:         r.Votes,
-			Exists:        r.Exists,
+			DPoSPublicKey:  r.DPoSPublicKey,
+			Votes:          r.Votes,
+			Exists:         r.Exists,
 		}
 	}
 
@@ -259,20 +435,75 @@ func (c *BPoSPoolContract) GetAllNodes() ([]BPoSNode, error) {
 }
 
 // UpdateNodes 更新 BPoS 节点
-func (c *BPoSPoolContract) UpdateNodes(ownerPublicKeys [][]byte, nickNames []string, dposPublicKeys [][]byte, votes []*big.Int) (*types.Transaction, error) {
-	auth, err := c.GetAuth()
+func (c *BPoSPoolContract) UpdateNodes(ownerPublicKeys [][]byte, nickNames []string, dposPublicKeys [][]byte, votes []*big.Int) (common.Hash, error) {
+	ctx := context.Background()
+	from := c.GetAddress()
+
+	// 使用 ABI 打包方法调用数据
+	data, err := c.abi.Pack("updateNodes", ownerPublicKeys, nickNames, dposPublicKeys, votes)
 	if err != nil {
-		return nil, err
+		return common.Hash{}, fmt.Errorf("failed to pack updateNodes: %w", err)
 	}
 
-	contract := bind.NewBoundContract(c.address, c.abi, c.client, c.client, c.client)
-	
-	tx, err := contract.Transact(auth, "updateNodes", ownerPublicKeys, nickNames, dposPublicKeys, votes)
+	// 获取 gasPrice
+	gasPrice, err := c.crossClient.SuggestGasPrice(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call updateNodes: %w", err)
+		return common.Hash{}, fmt.Errorf("failed to get gas price: %w", err)
 	}
 
-	return tx, nil
+	// 估算 gas
+	msg := ethereum.CallMsg{
+		From:     from,
+		To:       &c.address,
+		Data:     data,
+		GasPrice: gasPrice,
+		Value:    big.NewInt(0),
+	}
+	gasLimit, err := c.crossClient.EstimateGas(ctx, msg)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("failed to estimate gas: %w", err)
+	}
+	gasLimit = gasLimit + gasLimit*2/10 // 增加 20% 的 gas
+
+	// 获取 nonce
+	nonce, err := c.crossClient.PendingNonceAt(ctx, from)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("failed to get nonce: %w", err)
+	}
+
+	// 创建交易
+	tx := types.NewTx(&types.LegacyTx{
+		Nonce:    nonce,
+		To:       &c.address,
+		Value:    big.NewInt(0),
+		Gas:      gasLimit,
+		GasPrice: gasPrice,
+		Data:     data,
+	})
+
+	// 签名交易
+	signer, err := bind.NewKeyedTransactorWithChainID(c.privateKey, c.chainID)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("failed to create signer: %w", err)
+	}
+	signedTx, err := signer.Signer(from, tx)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("failed to sign transaction: %w", err)
+	}
+
+	// 编码交易
+	rawTx, err := rlp.EncodeToBytes(signedTx)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("failed to encode transaction: %w", err)
+	}
+
+	// 发送交易
+	txHash, err := c.crossClient.SendRawTransaction(ctx, rawTx)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("failed to send transaction: %w", err)
+	}
+
+	return txHash, nil
 }
 
 // Helper function to convert hex string to bytes
@@ -288,7 +519,7 @@ func parseVotes(votesStr string) (*big.Int, error) {
 	if len(parts) == 1 {
 		parts = append(parts, "0")
 	}
-	
+
 	// 确保小数部分有8位
 	for len(parts[1]) < 8 {
 		parts[1] += "0"
@@ -306,4 +537,3 @@ func parseVotes(votesStr string) (*big.Int, error) {
 
 	return value, nil
 }
-
