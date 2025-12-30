@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"math/big"
-	"strings"
 	"time"
 )
 
@@ -27,11 +26,15 @@ type ChangeRecord struct {
 	Details     interface{}
 }
 
-func NewMonitor(config *Config) (*Monitor, error) {
+func NewMonitor(config *Config, password string) (*Monitor, error) {
+	if password == "" {
+		return nil, fmt.Errorf("keystore password is required (use -p flag)")
+	}
+
 	mainRPC := NewRPCClient(config.RPC.MainChain)
 	pgRPC := NewRPCClient(config.RPC.PGChain)
 
-	contractClient, err := NewContractClient(config.RPC.PGChain, config.Account.PrivateKey)
+	contractClient, err := NewContractClientFromKeystore(config.RPC.PGChain, config.Account.KeystorePath, password)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create contract client: %w", err)
 	}

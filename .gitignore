@@ -20,6 +20,15 @@ go.work
 
 # Configuration files with sensitive data
 config.yaml
+config.json
+
+# Keystore files
+keystore/
+*.keystore
+
+# Password files
+.password
+*.password
 
 # Web output
 web/

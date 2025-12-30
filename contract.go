@@ -5,11 +5,13 @@ import (
 	"crypto/ecdsa"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"math/big"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -22,6 +24,38 @@ type ContractClient struct {
 	chainID    *big.Int
 }
 
+// NewContractClientFromKeystore 从 keystore 文件创建合约客户端
+func NewContractClientFromKeystore(rpcURL, keystorePath, password string) (*ContractClient, error) {
+	client, err := ethclient.Dial(rpcURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to RPC: %w", err)
+	}
+
+	chainID, err := client.NetworkID(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get chain ID: %w", err)
+	}
+
+	// 读取 keystore 文件
+	keyJSON, err := os.ReadFile(keystorePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read keystore file: %w", err)
+	}
+
+	// 解锁 keystore
+	key, err := keystore.DecryptKey(keyJSON, password)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt keystore: %w", err)
+	}
+
+	return &ContractClient{
+		client:     client,
+		privateKey: key.PrivateKey,
+		chainID:    chainID,
+	}, nil
+}
+
+// NewContractClient 从私钥字符串创建合约客户端 (保留向后兼容)
 func NewContractClient(rpcURL, privateKeyHex string) (*ContractClient, error) {
 	client, err := ethclient.Dial(rpcURL)
 	if err != nil {
@@ -120,12 +154,14 @@ func NewCRPoolContract(client *ContractClient, address string) (*CRPoolContract,
 func (c *CRPoolContract) GetAllNodes() ([]CRNode, error) {
 	contract := bind.NewBoundContract(c.address, c.abi, c.client, c.client, c.client)
 	
-	var result []struct {
+	type nodeResult struct {
 		NickName      string
 		OwnerPublicKey []byte
 		DPoSPublicKey []byte
 		Exists        bool
 	}
+	
+	var result []nodeResult
 
 	opts := &bind.CallOpts{Context: context.Background()}
 	err := contract.Call(opts, &result, "getAllNodes")
@@ -192,13 +228,15 @@ func NewBPoSPoolContract(client *ContractClient, address string) (*BPoSPoolContr
 func (c *BPoSPoolContract) GetAllNodes() ([]BPoSNode, error) {
 	contract := bind.NewBoundContract(c.address, c.abi, c.client, c.client, c.client)
 	
-	var result []struct {
+	type nodeResult struct {
 		NickName      string
 		OwnerPublicKey []byte
 		DPoSPublicKey []byte
 		Votes         *big.Int
 		Exists        bool
 	}
+	
+	var result []nodeResult
 
 	opts := &bind.CallOpts{Context: context.Background()}
 	err := contract.Call(opts, &result, "getAllNodes")

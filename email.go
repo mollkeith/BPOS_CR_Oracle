@@ -40,12 +40,8 @@ func (e *EmailService) SendUpdateEmail(monitor *Monitor, success bool, errMsg st
 	msg := gomail.NewMessage()
 	
 	// 设置发件人
-	from := e.config.Email.SMTP.From
-	if e.config.Email.SMTP.FromName != "" {
-		msg.SetAddressHeader("From", from, e.config.Email.SMTP.FromName)
-	} else {
-		msg.SetHeader("From", from)
-	}
+	from := e.config.Email.From.Address
+	msg.SetHeader("From", from)
 	
 	msg.SetHeader("To", e.config.Email.To...)
 	msg.SetHeader("Subject", subject)
@@ -54,8 +50,8 @@ func (e *EmailService) SendUpdateEmail(monitor *Monitor, success bool, errMsg st
 	dialer := gomail.NewDialer(
 		e.config.Email.SMTP.Host,
 		e.config.Email.SMTP.Port,
-		e.config.Email.SMTP.Username,
-		e.config.Email.SMTP.Password,
+		e.config.Email.From.Address,
+		e.config.Email.From.Password,
 	)
 
 	// 设置TLS (gomail 默认使用 StartTLS,如果端口是465则使用SSL)

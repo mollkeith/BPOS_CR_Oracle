@@ -1,71 +1,73 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
 	// 合约配置
-	Contracts ContractConfig `yaml:"contracts"`
+	Contracts ContractConfig `json:"contracts"`
 	
 	// RPC 配置
-	RPC RPCConfig `yaml:"rpc"`
+	RPC RPCConfig `json:"rpc"`
 	
 	// 更新配置
-	Update UpdateConfig `yaml:"update"`
+	Update UpdateConfig `json:"update"`
 	
 	// 邮件配置
-	Email EmailConfig `yaml:"email"`
+	Email EmailConfig `json:"email"`
 	
 	// 网页配置
-	Web WebConfig `yaml:"web"`
+	Web WebConfig `json:"web"`
 	
 	// 账户配置
-	Account AccountConfig `yaml:"account"`
+	Account AccountConfig `json:"account"`
 }
 
 type ContractConfig struct {
-	CRPoolAddress   string `yaml:"cr_pool_address"`   // CR信息合约地址
-	BPoSPoolAddress string `yaml:"bpos_pool_address"` // BPoS节点信息合约地址
+	CRPoolAddress   string `json:"cr_pool_address"`   // CR信息合约地址
+	BPoSPoolAddress string `json:"bpos_pool_address"` // BPoS节点信息合约地址
 }
 
 type RPCConfig struct {
-	MainChain string `yaml:"main_chain"` // 主链RPC地址
-	PGChain   string `yaml:"pg_chain"`  // PG链RPC地址
+	MainChain string `json:"main_chain"` // 主链RPC地址
+	PGChain   string `json:"pg_chain"`   // PG链RPC地址
 }
 
 type UpdateConfig struct {
-	Interval string `yaml:"interval"` // 更新间隔，如: "24h", "1h", "30m"
+	Interval string `json:"interval"` // 更新间隔，如: "24h", "1h", "30m"
 }
 
 type EmailConfig struct {
-	Enabled  bool     `yaml:"enabled"`  // 是否启用邮件通知
-	SMTP     SMTPConfig `yaml:"smtp"`  // SMTP服务器配置
-	To       []string `yaml:"to"`      // 收件人列表
-	Subject  string   `yaml:"subject"` // 邮件主题前缀
+	Enabled bool       `json:"enabled"`  // 是否启用邮件通知
+	From    FromConfig `json:"from"`     // 发件人配置
+	To      []string   `json:"to"`       // 收件人列表
+	SMTP    SMTPConfig `json:"smtp"`     // SMTP服务器配置
+	Subject string     `json:"subject"`  // 邮件主题前缀
+}
+
+type FromConfig struct {
+	Address  string `json:"address"`  // 发件人邮箱地址
+	Password string `json:"password"` // 发件人邮箱密码
 }
 
 type SMTPConfig struct {
-	Host     string `yaml:"host"`     // SMTP服务器地址
-	Port     int    `yaml:"port"`      // SMTP端口
-	Username string `yaml:"username"`  // SMTP用户名
-	Password string `yaml:"password"`  // SMTP密码
-	From     string `yaml:"from"`      // 发件人邮箱
-	FromName string `yaml:"from_name"` // 发件人名称
-	TLS      bool   `yaml:"tls"`       // 是否使用TLS
+	Host string `json:"host"` // SMTP服务器地址
+	Port int    `json:"port"` // SMTP端口
+	TLS  bool   `json:"tls"`  // 是否使用TLS
 }
 
 type WebConfig struct {
-	Enabled bool   `yaml:"enabled"`      // 是否启用网页生成
-	Path    string `yaml:"output_path"` // 静态网页输出路径
+	Enabled bool   `json:"enabled"`      // 是否启用网页生成
+	Path    string `json:"output_path"`  // 静态网页输出路径
 }
 
 type AccountConfig struct {
-	PrivateKey string `yaml:"private_key"` // 用于签名交易的私钥(hex格式,不带0x前缀)
+	KeystorePath string `json:"keystore_path"` // keystore文件路径
+	// Password 不再从配置文件读取，改为通过命令行参数 -p 输入
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -75,7 +77,7 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	var config Config
-	if err := yaml.Unmarshal(data, &config); err != nil {
+	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
@@ -92,9 +94,10 @@ func LoadConfig(path string) (*Config, error) {
 	if config.RPC.PGChain == "" {
 		return nil, fmt.Errorf("rpc.pg_chain is required")
 	}
-	if config.Account.PrivateKey == "" {
-		return nil, fmt.Errorf("account.private_key is required")
+	if config.Account.KeystorePath == "" {
+		return nil, fmt.Errorf("account.keystore_path is required")
 	}
+	// Password 通过命令行参数提供，不在这里验证
 
 	// 设置默认值
 	if config.Update.Interval == "" {

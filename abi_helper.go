@@ -33,3 +33,4 @@ func getBPoSPoolABI() (string, error) {
 	return loadABIFromFile("abi/BPoSPool.json")
 }
 
+

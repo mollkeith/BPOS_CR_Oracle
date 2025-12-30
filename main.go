@@ -10,8 +10,14 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "config.yaml", "Path to configuration file")
+	configPath := flag.String("config", "config.json", "Path to configuration file")
+	password := flag.String("p", "", "Keystore password (required)")
 	flag.Parse()
+
+	// 检查密码是否提供
+	if *password == "" {
+		log.Fatal("Error: keystore password is required. Use -p flag to provide password.")
+	}
 
 	// 加载配置
 	config, err := LoadConfig(*configPath)
@@ -20,7 +26,7 @@ func main() {
 	}
 
 	// 创建监控器
-	monitor, err := NewMonitor(config)
+	monitor, err := NewMonitor(config, *password)
 	if err != nil {
 		log.Fatalf("Failed to create monitor: %v", err)
 	}
