@@ -13,13 +13,14 @@ Show current cr members information
 | code            | string | the cr member code                    |
 | cid             | string | the cr member address                 |
 | did             | string | the cr member did address             |
+| dpospublickey   | string | the cr member dpos public key         |
 | nickname        | string | the nick name of the cr member        |
 | url             | string | the url of the cr member              |
 | location        | uint64 | the location number of the cr member  |
-| impeachmentvotes| string  | impeachment votes of the cr member    |
+| impeachmentvotes| string  | impeachment votes of the cr member   |
 | depositamount   | string | the deposite amout of the cr member   |
 | depositaddress  | string | the deposite address of the cr member |
-| penalty         | string  | the penalty of the cr member          |
+| penalty         | string  | the penalty of the cr member         |
 | index           | uint64 | the index of the cr member            |
 | totalcounts     | uint64 | the total counts of current cr member |
 
@@ -48,6 +49,7 @@ Response:
                 "code": "2102e23f70b9b967af35571c32b1442d787c180753bbed5cd6e7d5a5cfe75c7fc1ffac",
                 "cid": "iaiZJM922uWo2Uc2gYwZk1nEgiVV7NTtxR",
                 "did": "inTc9GeWyNNKNwT1cDcvvEgQwnjszbtpZ5",
+                "dpospublickey": "02a91b4ccc0204e2964719fe5035c06af1d5141968eb1e5117f74feee625eac4d5",
                 "nickname": "ela_cr2",
                 "url": "ela_cr2.org",
                 "location": 112211, 
@@ -62,6 +64,7 @@ Response:
                 "code": "2103c3dd01baa4e3d0625f6c0026ad3d06d085e80c57477efa1a4aa2ab209c210e95ac",
                 "cid": "iUBoqE5KnBA1zsd4EWeyj2mXMfUrm5rDmf",
                 "did": "intySungjAK3uyHeoajez3yRqX5x68NrNi",
+                "dpospublickey": "02b07c2a60de0b42e8fb11a69976f8e1fac29024786a4d36aa26fcfc1fca52fd9b",
                 "nickname": "ela_cr1",
                 "url": "ela_cr1.org",
                 "location": 112211,

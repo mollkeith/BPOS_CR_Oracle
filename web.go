@@ -4,8 +4,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html/template"
+	"log"
 	"math/big"
-	"os"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -43,7 +44,7 @@ type ChangeRecordDisplay struct {
 	Description string
 }
 
-// GenerateWebPage 生成静态网页
+// GenerateWebPage 更新网页数据（用于 HTTP 服务器）
 func (m *Monitor) GenerateWebPage() error {
 	// 检查是否启用网页生成
 	if !m.config.Web.Enabled {
@@ -133,26 +134,44 @@ func (m *Monitor) GenerateWebPage() error {
 		UpdateTime:      time.Now().Format("2006-01-02 15:04:05"),
 	}
 
-	// 检查是否启用网页生成
+	// 更新 webData（线程安全）
+	m.webDataMutex.Lock()
+	m.webData = &data
+	m.webDataMutex.Unlock()
+
+	return nil
+}
+
+// StartWebServer 启动 HTTP 服务器在 localhost:3000
+func (m *Monitor) StartWebServer() error {
 	if !m.config.Web.Enabled {
 		return nil
 	}
 
-	// 创建输出目录
-	if err := os.MkdirAll(m.config.Web.Path, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
-	}
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		m.webDataMutex.RLock()
+		data := m.webData
+		m.webDataMutex.RUnlock()
 
-	// 生成 HTML
-	htmlContent := generateHTML(data)
+		if data == nil {
+			http.Error(w, "Web data not available yet", http.StatusServiceUnavailable)
+			return
+		}
 
-	// 写入文件
-	outputPath := fmt.Sprintf("%s/index.html", m.config.Web.Path)
-	if err := os.WriteFile(outputPath, []byte(htmlContent), 0644); err != nil {
-		return fmt.Errorf("failed to write HTML file: %w", err)
-	}
+		htmlContent := generateHTML(*data)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(htmlContent))
+	})
 
-	fmt.Printf("Web page generated at: %s\n", outputPath)
+	addr := ":3000"
+	log.Printf("Starting web server on http://localhost%s", addr)
+	go func() {
+		if err := http.ListenAndServe(addr, nil); err != nil {
+			log.Printf("Web server error: %v", err)
+		}
+	}()
+
 	return nil
 }
 

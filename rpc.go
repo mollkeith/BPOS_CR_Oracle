@@ -79,6 +79,7 @@ type CRMember struct {
 	Code            string `json:"code"`
 	CID             string `json:"cid"`
 	DID             string `json:"did"`
+	DPoSPublicKey   string `json:"dpospublickey"`
 	Nickname        string `json:"nickname"`
 	URL             string `json:"url"`
 	Location        uint64 `json:"location"`
@@ -127,6 +128,7 @@ type Producer struct {
 	Location        uint64 `json:"location"`
 	Active          bool   `json:"active"`
 	Votes           string `json:"votes"`
+	DPoSV2Votes     string `json:"dposv2votes"`
 	State           string `json:"state"`
 	OnDuty          string `json:"onduty"`
 	Identity        string `json:"identity"`

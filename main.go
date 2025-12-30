@@ -79,7 +79,12 @@ func main() {
 		log.Printf("Initial check failed: %v", err)
 	}
 
-	// 生成初始网页
+	// 启动 Web 服务器
+	if err := monitor.StartWebServer(); err != nil {
+		log.Printf("Failed to start web server: %v", err)
+	}
+
+	// 生成初始网页数据
 	if err := monitor.GenerateWebPage(); err != nil {
 		log.Printf("Failed to generate initial web page: %v", err)
 	}
@@ -101,9 +106,9 @@ func main() {
 				log.Printf("Scheduled check failed: %v", err)
 			}
 
-			// 生成网页
+			// 更新网页数据
 			if err := monitor.GenerateWebPage(); err != nil {
-				log.Printf("Failed to generate web page: %v", err)
+				log.Printf("Failed to update web page data: %v", err)
 			}
 
 		case sig := <-sigChan:
@@ -115,7 +120,7 @@ func main() {
 
 func performCheckAndUpdate(monitor *Monitor, emailService *EmailService) error {
 	err := monitor.CheckAndUpdate()
-	
+
 	// 发送邮件通知
 	emailErr := emailService.SendUpdateEmail(monitor, err == nil, "")
 	if emailErr != nil {
@@ -130,4 +135,3 @@ func performCheckAndUpdate(monitor *Monitor, emailService *EmailService) error {
 
 	return nil
 }
-

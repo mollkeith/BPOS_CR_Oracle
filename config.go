@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"os"
 	"time"
 )
@@ -25,6 +26,9 @@ type Config struct {
 	
 	// 账户配置
 	Account AccountConfig `json:"account"`
+	
+	// BPoS 配置
+	BPoS BPoSConfig `json:"bpos"`
 }
 
 type ContractConfig struct {
@@ -70,6 +74,10 @@ type AccountConfig struct {
 	// Password 不再从配置文件读取，改为通过命令行参数 -p 输入
 }
 
+type BPoSConfig struct {
+	MinDPoSV2Votes string `json:"min_dposv2_votes"` // 最小 DPoS V2 投票数（ELA），如 "80000"，假设有8位小数
+}
+
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -112,11 +120,21 @@ func LoadConfig(path string) (*Config, error) {
 	if config.Email.Subject == "" {
 		config.Email.Subject = "BPoS & CR Monitor"
 	}
+	// 设置 BPoS 默认值
+	if config.BPoS.MinDPoSV2Votes == "" {
+		config.BPoS.MinDPoSV2Votes = "80000" // 默认 80000 ELA
+	}
 
 	return &config, nil
 }
 
 func (c *Config) GetUpdateInterval() (time.Duration, error) {
 	return time.ParseDuration(c.Update.Interval)
+}
+
+// GetMinDPoSV2Votes 获取最小 DPoS V2 投票数（转换为 big.Int，假设有8位小数）
+func (c *BPoSConfig) GetMinDPoSV2Votes() (*big.Int, error) {
+	// 使用 parseVotes 函数来解析，它假设有8位小数
+	return parseVotes(c.MinDPoSV2Votes)
 }
 

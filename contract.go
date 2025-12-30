@@ -193,12 +193,6 @@ func (c *CRPoolContract) GetAllNodes() ([]CRNode, error) {
 		return nil, fmt.Errorf("contract at %s does not exist", c.address.Hex())
 	}
 
-	// 检查方法是否存在
-	method, ok := c.abi.Methods["getAllNodes"]
-	if !ok {
-		return nil, fmt.Errorf("method getAllNodes not found in ABI")
-	}
-
 	// 构造调用数据
 	data, err := c.abi.Pack("getAllNodes")
 	if err != nil {
@@ -221,7 +215,7 @@ func (c *CRPoolContract) GetAllNodes() ([]CRNode, error) {
 		return make([]CRNode, 0), nil
 	}
 
-	// 解包结果
+	// 解包结果 - 使用 UnpackIntoInterface 直接解包到结构体数组
 	type nodeResult struct {
 		NickName       string
 		OwnerPublicKey []byte
@@ -230,19 +224,12 @@ func (c *CRPoolContract) GetAllNodes() ([]CRNode, error) {
 	}
 
 	var nodesResult []nodeResult
-	unpacked, err := method.Outputs.Unpack(result)
+	err = c.abi.UnpackIntoInterface(&nodesResult, "getAllNodes", result)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unpack result: %w", err)
 	}
 
-	// 转换结果
-	if len(unpacked) > 0 {
-		if nodes, ok := unpacked[0].([]nodeResult); ok {
-			nodesResult = nodes
-		} else {
-			return nil, fmt.Errorf("unexpected result type: %T", unpacked[0])
-		}
-	}
+	log.Printf("######## unpacked nodes count: %d", len(nodesResult))
 
 	nodes := make([]CRNode, len(nodesResult))
 	for i, r := range nodesResult {
@@ -263,6 +250,15 @@ func (c *CRPoolContract) SetNodes(nickNames []string, ownerPublicKeys [][]byte, 
 	from := c.GetAddress()
 
 	// 使用 ABI 打包方法调用数据
+	fmt.Println("######## nickNames: %v", nickNames)
+	// print ownerPublicKeys as hex and length
+	for i, key := range ownerPublicKeys {
+		fmt.Printf("######## ownerPublicKey[%d]: %v, length: %d\n", i, hex.EncodeToString(key), len(key))
+	}
+	// print dposPublicKeys as hex and length
+	for i, key := range dposPublicKeys {
+		fmt.Printf("######## dposPublicKey[%d]: %v, length: %d\n", i, hex.EncodeToString(key), len(key))
+	}
 	data, err := c.abi.Pack("setNodes", nickNames, ownerPublicKeys, dposPublicKeys)
 	if err != nil {
 		return common.Hash{}, fmt.Errorf("failed to pack setNodes: %w", err)
@@ -368,12 +364,6 @@ func (c *BPoSPoolContract) GetAllNodes() ([]BPoSNode, error) {
 		return nil, fmt.Errorf("contract at %s does not exist", c.address.Hex())
 	}
 
-	// 检查方法是否存在
-	method, ok := c.abi.Methods["getAllNodes"]
-	if !ok {
-		return nil, fmt.Errorf("method getAllNodes not found in ABI")
-	}
-
 	// 构造调用数据
 	data, err := c.abi.Pack("getAllNodes")
 	if err != nil {
@@ -396,7 +386,7 @@ func (c *BPoSPoolContract) GetAllNodes() ([]BPoSNode, error) {
 		return make([]BPoSNode, 0), nil
 	}
 
-	// 解包结果
+	// 解包结果 - 使用 UnpackIntoInterface 直接解包到结构体数组
 	type nodeResult struct {
 		NickName       string
 		OwnerPublicKey []byte
@@ -406,19 +396,12 @@ func (c *BPoSPoolContract) GetAllNodes() ([]BPoSNode, error) {
 	}
 
 	var nodesResult []nodeResult
-	unpacked, err := method.Outputs.Unpack(result)
+	err = c.abi.UnpackIntoInterface(&nodesResult, "getAllNodes", result)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unpack result: %w", err)
 	}
 
-	// 转换结果
-	if len(unpacked) > 0 {
-		if nodes, ok := unpacked[0].([]nodeResult); ok {
-			nodesResult = nodes
-		} else {
-			return nil, fmt.Errorf("unexpected result type: %T", unpacked[0])
-		}
-	}
+	log.Printf("######## unpacked nodes count: %d", len(nodesResult))
 
 	nodes := make([]BPoSNode, len(nodesResult))
 	for i, r := range nodesResult {
