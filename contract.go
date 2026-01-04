@@ -154,6 +154,24 @@ type BPoSNode struct {
 	Exists         bool
 }
 
+// OperationType 表示节点操作类型
+type OperationType uint8
+
+const (
+	OperationTypeAdd    OperationType = 0 // Add
+	OperationTypeUpdate OperationType = 1 // Update
+	OperationTypeRemove OperationType = 2 // Remove
+)
+
+// NodeOperation 表示节点操作
+type NodeOperation struct {
+	NickName       string
+	OwnerPublicKey []byte
+	DPoSPublicKey  []byte
+	Votes          *big.Int
+	OperationType  OperationType
+}
+
 // CRPoolContract CR 合约接口
 type CRPoolContract struct {
 	*ContractClient
@@ -250,7 +268,7 @@ func (c *CRPoolContract) SetNodes(nickNames []string, ownerPublicKeys [][]byte, 
 	from := c.GetAddress()
 
 	// 使用 ABI 打包方法调用数据
-	fmt.Println("######## nickNames: %v", nickNames)
+	fmt.Printf("######## nickNames: %v\n", nickNames)
 	// print ownerPublicKeys as hex and length
 	for i, key := range ownerPublicKeys {
 		fmt.Printf("######## ownerPublicKey[%d]: %v, length: %d\n", i, hex.EncodeToString(key), len(key))
@@ -417,15 +435,38 @@ func (c *BPoSPoolContract) GetAllNodes() ([]BPoSNode, error) {
 	return nodes, nil
 }
 
-// UpdateNodes 更新 BPoS 节点
-func (c *BPoSPoolContract) UpdateNodes(ownerPublicKeys [][]byte, nickNames []string, dposPublicKeys [][]byte, votes []*big.Int) (common.Hash, error) {
+// SyncNodes 同步 BPoS 节点（使用 syncNodes 方法）
+// 参考 abi/syncNodes.ts 的实现
+func (c *BPoSPoolContract) SyncNodes(operations []NodeOperation) (common.Hash, error) {
 	ctx := context.Background()
 	from := c.GetAddress()
 
-	// 使用 ABI 打包方法调用数据
-	data, err := c.abi.Pack("updateNodes", ownerPublicKeys, nickNames, dposPublicKeys, votes)
+	// 创建一个专门用于 ABI Pack 的结构体，使用结构体标签指定 ABI 字段名
+	// 参考 TypeScript 实现：字段名是 nickName, ownerPublicKey, dposPublicKey, votes, operationType
+	type abiNodeOp struct {
+		NickName       string   `abi:"nickName"`
+		OwnerPublicKey []byte   `abi:"ownerPublicKey"`
+		DPosPublicKey  []byte   `abi:"dposPublicKey"` // 使用标签指定 ABI 字段名
+		Votes          *big.Int `abi:"votes"`
+		OperationType  uint8    `abi:"operationType"`
+	}
+
+	// 转换为 ABI 结构体数组
+	operationsForABI := make([]abiNodeOp, len(operations))
+	for i, op := range operations {
+		operationsForABI[i] = abiNodeOp{
+			NickName:       op.NickName,
+			OwnerPublicKey: op.OwnerPublicKey,
+			DPosPublicKey:  op.DPoSPublicKey,
+			Votes:          op.Votes,
+			OperationType:  uint8(op.OperationType),
+		}
+	}
+
+	// 使用 ABI Pack 方法直接打包
+	data, err := c.abi.Pack("syncNodes", operationsForABI)
 	if err != nil {
-		return common.Hash{}, fmt.Errorf("failed to pack updateNodes: %w", err)
+		return common.Hash{}, fmt.Errorf("failed to pack syncNodes: %w", err)
 	}
 
 	// 获取 gasPrice

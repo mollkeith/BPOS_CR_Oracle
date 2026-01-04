@@ -1,0 +1,39 @@
+{
+  "contracts": {
+    "cr_pool_address": "0x0000000000000000000000000000000000000000",
+    "bpos_pool_address": "0x0000000000000000000000000000000000000000"
+  },
+  "rpc": {
+    "main_chain": "https://api.elastos.io/ela",
+    "pg_chain": "https://api.elastos.io/pg"
+  },
+  "update": {
+    "interval": "24h"
+  },
+  "email": {
+    "enabled": true,
+    "from": {
+      "address": "your_email@gmail.com",
+      "password": "your_app_password"
+    },
+    "to": [
+      "your_email@gmail.com"
+    ],
+    "subject": "BPoS & CR Monitor",
+    "smtp": {
+      "host": "smtppro.zoho.com",
+      "port": 587,
+      "tls": true
+    }
+  },
+  "web": {
+    "enabled": true,
+    "output_path": "./web"
+  },
+  "account": {
+    "keystore_path": "./keystore/UTC--2024-01-01T00-00-00.000000000Z--your_address"
+  },
+  "bpos": {
+    "min_dposv2_votes": "80000"
+  }
+}

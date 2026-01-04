@@ -315,59 +315,181 @@ func (m *Monitor) checkAndUpdateBPoS() (bool, error) {
 	}
 	log.Printf("Filtered BPoS producers: %d out of %d meet criteria (State=Active, active=true, dposv2votes>%s)", len(filteredProducers), len(rpcProducers), minVotesStr)
 
-	// 比较是否有变化（只比较过滤后的生产者）
-	if !m.bposHasChanges(filteredProducers, contractNodes) {
+	// 构建操作列表 - 比较 RPC 和合约数据，确定 OperationType
+	operations := m.buildNodeOperations(filteredProducers, contractNodes)
+
+	if len(operations) == 0 {
+		log.Printf("No operations needed for BPoS nodes")
 		return false, nil
 	}
 
-	// 准备更新数据 - 只更新满足条件的节点
-	ownerPublicKeys := make([][]byte, 0, len(filteredProducers))
-	nickNames := make([]string, 0, len(filteredProducers))
-	dposPublicKeys := make([][]byte, 0, len(filteredProducers))
-	votes := make([]*big.Int, 0, len(filteredProducers))
-
-	for _, producer := range filteredProducers {
-		ownerPK, err := hexToBytes(producer.OwnerPublicKey)
-		if err != nil {
-			log.Printf("Warning: failed to parse owner public key for producer %s: %v", producer.Nickname, err)
-			continue
-		}
-		ownerPublicKeys = append(ownerPublicKeys, ownerPK)
-
-		nickNames = append(nickNames, producer.Nickname)
-
-		nodePK, err := hexToBytes(producer.NodePublicKey)
-		if err != nil {
-			log.Printf("Warning: failed to parse node public key for producer %s: %v", producer.Nickname, err)
-			continue
-		}
-		dposPublicKeys = append(dposPublicKeys, nodePK)
-
-		voteValue, err := parseVotes(producer.Votes)
-		if err != nil {
-			log.Printf("Warning: failed to parse votes for producer %s: %v", producer.Nickname, err)
-			voteValue = big.NewInt(0)
-		}
-		votes = append(votes, voteValue)
-	}
-
-	// 调用合约更新
-	txHash, err := m.bposContract.UpdateNodes(ownerPublicKeys, nickNames, dposPublicKeys, votes)
+	// 调用合约同步
+	txHash, err := m.bposContract.SyncNodes(operations)
 	if err != nil {
-		return false, fmt.Errorf("failed to call updateNodes: %w", err)
+		return false, fmt.Errorf("failed to call syncNodes: %w", err)
 	}
 
-	log.Printf("BPoS update transaction sent: %s", txHash.Hex())
+	log.Printf("BPoS sync transaction sent: %s", txHash.Hex())
+
+	// 统计操作类型
+	addCount := 0
+	updateCount := 0
+	removeCount := 0
+	for _, op := range operations {
+		switch op.OperationType {
+		case OperationTypeAdd:
+			addCount++
+		case OperationTypeUpdate:
+			updateCount++
+		case OperationTypeRemove:
+			removeCount++
+		}
+	}
 
 	// 记录变更
 	m.changeHistory = append(m.changeHistory, ChangeRecord{
 		Time:        time.Now(),
 		Type:        "BPoS",
-		Description: fmt.Sprintf("Updated %d BPoS nodes (filtered from %d total)", len(ownerPublicKeys), len(rpcProducers)),
+		Description: fmt.Sprintf("Synced BPoS nodes: %d Add, %d Update, %d Remove (filtered from %d total)", addCount, updateCount, removeCount, len(rpcProducers)),
 		Details:     filteredProducers,
 	})
 
 	return true, nil
+}
+
+// buildNodeOperations 构建节点操作列表，确定每个节点的 OperationType
+func (m *Monitor) buildNodeOperations(rpcProducers []Producer, contractNodes []BPoSNode) []NodeOperation {
+	// 创建合约节点的映射 (使用 ownerPublicKey 作为 key)
+	contractMap := make(map[string]BPoSNode)
+	for _, node := range contractNodes {
+		key := hex.EncodeToString(node.OwnerPublicKey)
+		contractMap[key] = node
+	}
+
+	// 创建 RPC 生产者的映射 (使用 ownerPublicKey 作为 key)
+	rpcMap := make(map[string]Producer)
+	for _, producer := range rpcProducers {
+		ownerPK, err := hexToBytes(producer.OwnerPublicKey)
+		if err != nil {
+			log.Printf("Warning: failed to parse owner public key for producer %s: %v", producer.Nickname, err)
+			continue
+		}
+		key := hex.EncodeToString(ownerPK)
+		rpcMap[key] = producer
+	}
+
+	operations := make([]NodeOperation, 0)
+
+	// 1. 处理 RPC 中的节点：Add 或 Update
+	for _, producer := range rpcProducers {
+		ownerPK, err := hexToBytes(producer.OwnerPublicKey)
+		if err != nil {
+			log.Printf("Warning: failed to parse owner public key for producer %s: %v", producer.Nickname, err)
+			continue
+		}
+		key := hex.EncodeToString(ownerPK)
+
+		contractNode, exists := contractMap[key]
+		opType := OperationTypeAdd
+		if exists {
+			// 检查是否需要更新（只比较 nickName、dposPublicKey、votes，ownerPublicKey 不会变）
+			needsUpdate := false
+			updateReasons := make([]string, 0)
+
+			// 比较 NickName
+			if contractNode.NickName != producer.Nickname {
+				needsUpdate = true
+				updateReasons = append(updateReasons, fmt.Sprintf("NickName: contract='%s' != rpc='%s'", contractNode.NickName, producer.Nickname))
+			}
+
+			// 比较 DPoSPublicKey
+			nodePK, err := hexToBytes(producer.NodePublicKey)
+			if err != nil {
+				log.Printf("Warning: failed to parse node public key for producer %s: %v", producer.Nickname, err)
+				continue
+			}
+			contractDPoSKey := hex.EncodeToString(contractNode.DPoSPublicKey)
+			rpcDPoSKey := hex.EncodeToString(nodePK)
+			if contractDPoSKey != rpcDPoSKey {
+				needsUpdate = true
+				updateReasons = append(updateReasons, fmt.Sprintf("DPoSPublicKey: contract='%s' != rpc='%s'", contractDPoSKey, rpcDPoSKey))
+			}
+
+			// 比较 Votes (使用 DPoSV2Votes)
+			voteValue, err := parseVotes(producer.DPoSV2Votes)
+			if err != nil {
+				log.Printf("Warning: failed to parse votes for producer %s: %v", producer.Nickname, err)
+				voteValue = big.NewInt(0)
+			}
+			if contractNode.Votes.Cmp(voteValue) != 0 {
+				needsUpdate = true
+				updateReasons = append(updateReasons, fmt.Sprintf("Votes: contract='%s' != rpc='%s' (DPoSV2Votes)", contractNode.Votes.String(), voteValue.String()))
+			}
+
+			if needsUpdate {
+				opType = OperationTypeUpdate
+				log.Printf("Node %s needs Update. Reasons: %v", producer.Nickname, updateReasons)
+			} else {
+				// 不需要更新，跳过
+				log.Printf("Node %s (ownerPK=%s) no changes needed, skipping", producer.Nickname, key)
+				continue
+			}
+		}
+
+		// 解析数据
+		nodePK, err := hexToBytes(producer.NodePublicKey)
+		if err != nil {
+			log.Printf("Warning: failed to parse node public key for producer %s: %v", producer.Nickname, err)
+			continue
+		}
+
+		voteValue, err := parseVotes(producer.DPoSV2Votes)
+		if err != nil {
+			log.Printf("Warning: failed to parse votes for producer %s: %v", producer.Nickname, err)
+			voteValue = big.NewInt(0)
+		}
+
+		operations = append(operations, NodeOperation{
+			NickName:       producer.Nickname,
+			OwnerPublicKey: ownerPK,
+			DPoSPublicKey:  nodePK,
+			Votes:          voteValue,
+			OperationType:  opType,
+		})
+	}
+
+	// 2. 处理合约中存在但 RPC 中不存在的节点：Remove
+	for _, contractNode := range contractNodes {
+		key := hex.EncodeToString(contractNode.OwnerPublicKey)
+		if _, exists := rpcMap[key]; !exists {
+			// 合约中存在但 RPC 中不存在，需要 Remove
+			operations = append(operations, NodeOperation{
+				NickName:       contractNode.NickName,
+				OwnerPublicKey: contractNode.OwnerPublicKey,
+				DPoSPublicKey:  contractNode.DPoSPublicKey,
+				Votes:          contractNode.Votes,
+				OperationType:  OperationTypeRemove,
+			})
+		}
+	}
+
+	log.Printf("Built %d node operations: %d Add, %d Update, %d Remove", len(operations),
+		countOperationsByType(operations, OperationTypeAdd),
+		countOperationsByType(operations, OperationTypeUpdate),
+		countOperationsByType(operations, OperationTypeRemove))
+
+	return operations
+}
+
+// countOperationsByType 统计指定类型的操作数量
+func countOperationsByType(operations []NodeOperation, opType OperationType) int {
+	count := 0
+	for _, op := range operations {
+		if op.OperationType == opType {
+			count++
+		}
+	}
+	return count
 }
 
 // bposHasChanges 检查 BPoS 是否有变化
@@ -405,7 +527,7 @@ func (m *Monitor) bposHasChanges(rpcProducers []Producer, contractNodes []BPoSNo
 			return true
 		}
 
-		voteValue, err := parseVotes(producer.Votes)
+		voteValue, err := parseVotes(producer.DPoSV2Votes)
 		if err != nil {
 			continue
 		}
