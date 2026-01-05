@@ -4,14 +4,14 @@
 
 ## 📋 目录
 
-- [快速开始](#快速开始)
-- [功能特性](#功能特性)
-- [系统架构](#系统架构)
-- [实现详解](#实现详解)
-- [编译和运行](#编译和运行)
-- [配置说明](#配置说明)
-- [工作流程](#工作流程)
-- [注意事项](#注意事项)
+- [快速开始](#-快速开始)
+- [功能特性](#-功能特性)
+- [系统架构](#-系统架构)
+- [实现详解](#-实现详解)
+- [编译和运行](#-编译和运行)
+- [配置说明](#-配置说明)
+- [工作流程](#-工作流程)
+- [注意事项](#-注意事项)
 
 ## 🚀 快速开始
 
@@ -23,18 +23,57 @@ cp config.json.example config.json
 # 编辑 config.json，填入合约地址、RPC 地址等
 ```
 
-2. **准备 keystore 文件**
+2. **生成 keystore 文件**
+
+如果你还没有 keystore 文件，可以使用项目自带的工具生成：
+
+**方式 1: 生成新的 keystore (推荐)**
 ```bash
-mkdir -p keystore
-# 将你的 keystore 文件放到 keystore/ 目录下
+# 生成新的私钥和 keystore
+go run ./cmd/create_keystore
+
+# 按提示输入密码，会生成 keystore 文件到 ./keystore/ 目录
 ```
 
-3. **编译程序**
+**方式 2: 从现有私钥创建 keystore**
+```bash
+# 如果你已有私钥（hex 格式，不带 0x 前缀）
+go run ./cmd/create_keystore -key "your_private_key_hex_without_0x"
+
+# 按提示输入密码
+```
+
+**方式 3: 使用 Makefile**
+```bash
+make create-keystore
+```
+
+生成成功后，会显示：
+```
+✅ Keystore created successfully!
+Address: 0x1234567890123456789012345678901234567890
+Keystore file: ./keystore/UTC--2024-01-01T00-00-00.000000000Z--1234567890123456789012345678901234567890
+```
+
+**重要**: 记住生成的地址和密码，后续需要在 `config.json` 中配置 keystore 文件路径。
+
+3. **配置 keystore 路径**
+
+编辑 `config.json`，设置 `account.keystore_path` 为生成的 keystore 文件路径：
+```json
+{
+  "account": {
+    "keystore_path": "./keystore/UTC--2024-01-01T00-00-00.000000000Z--your_address"
+  }
+}
+```
+
+4. **编译程序**
 ```bash
 go build -o bpos_cr_monitor
 ```
 
-4. **启动程序**
+5. **启动程序**
 ```bash
 ./bpos_cr_monitor -config config.json -p "your_keystore_password"
 ```
@@ -105,10 +144,11 @@ pkill -f bpos_cr_monitor
 
 - ✅ **定期监控**: 可配置的定期检查间隔，自动从主链 RPC 获取 CR 和 BPoS 信息
 - ✅ **智能对比**: 自动对比 RPC 数据与合约数据，检测变更
-- ✅ **自动更新**: 检测到变化时自动调用智能合约更新 (CRPool.setNodes 和 BPoSPool.updateNodes)
-- ✅ **静态网页**: 生成美观的 HTML 网页展示当前状态、排名、层级等信息
+- ✅ **自动更新**: 检测到变化时自动调用智能合约更新 (CRPool.setNodes 和 BPoSPool.syncNodes)
+- ✅ **Web 界面**: 通过 HTTP 服务器 (http://localhost:3000) 实时展示当前状态、排名、层级等信息
 - ✅ **邮件通知**: 支持 SMTP 邮件通知，更新成功/失败都会发送邮件
 - ✅ **变更历史**: 记录所有变更历史，方便追踪
+- ✅ **BPoS 过滤**: 支持配置最小投票数阈值，只更新符合条件的 BPoS 节点
 
 ## 🏗️ 系统架构
 
@@ -220,11 +260,22 @@ func (c *RPCClient) Call(method string, params interface{}) (json.RawMessage, er
    }
    ```
 
-2. **合约更新** (`SetNodes` / `UpdateNodes`):
+2. **合约更新**:
+   - **CR**: `SetNodes` - 设置 CR 节点列表
+   - **BPoS**: `SyncNodes` - 同步 BPoS 节点 (支持 Add/Update/Remove 操作)
+   
    ```go
-   func (c *CRPoolContract) SetNodes(...) (*types.Transaction, error) {
-       auth, _ := c.GetAuth() // 获取交易授权
-       contract.Transact(auth, "setNodes", ...)
+   func (c *CRPoolContract) SetNodes(...) (common.Hash, error) {
+       // 使用 ABI Pack 打包数据
+       data, err := c.abi.Pack("setNodes", ...)
+       // 创建并发送交易
+   }
+   
+   func (c *BPoSPoolContract) SyncNodes(operations []NodeOperation) (common.Hash, error) {
+       // 构建 NodeOperation 数组 (包含 OperationType: Add/Update/Remove)
+       // 使用 ABI Pack 打包数据
+       data, err := c.abi.Pack("syncNodes", operationsForABI)
+       // 创建并发送交易
    }
    ```
 
@@ -255,9 +306,10 @@ func (c *RPCClient) Call(method string, params interface{}) (json.RawMessage, er
    │
    └── 检查 BPoS
        ├── 从 RPC 获取生产者列表
+       ├── 过滤符合条件的节点 (State=Active, active=true, dposv2votes>minVotes)
        ├── 从合约获取节点列表
-       ├── 对比数据 (bposHasChanges)
-       └── 如有变化，调用 updateNodes 更新
+       ├── 对比数据 (buildNodeOperations)
+       └── 如有变化，调用 syncNodes 更新 (支持 Add/Update/Remove 操作)
    ```
 
 3. **数据对比逻辑**:
@@ -267,22 +319,29 @@ func (c *RPCClient) Call(method string, params interface{}) (json.RawMessage, er
    - 使用 ownerPublicKey 作为唯一标识
    - 检查新增、删除、修改
 
-   **BPoS 对比** (`bposHasChanges`):
-   - 比较字段: `ownerPK`, `bposPK` (dposPublicKey), `NickName`, `votes`
+   **BPoS 对比** (`buildNodeOperations`):
+   - 首先过滤 RPC 数据: 只处理 `State=Active`, `active=true`, `dposv2votes > minVotes` 的节点
+   - 比较字段: `nickName`, `dposPublicKey`, `votes` (使用 DPoSV2Votes)
    - 使用 ownerPublicKey 作为唯一标识
-   - 检查新增、删除、修改
+   - 确定操作类型:
+     - **Add**: RPC 中存在但合约中不存在
+     - **Update**: 两者都存在但字段有变化 (nickName, dposPublicKey, votes)
+     - **Remove**: 合约中存在但 RPC 中不存在
+   - 调用 `syncNodes` 方法批量更新
 
 4. **变更记录**:
    - 每次更新都会记录到 `changeHistory`
    - 记录时间、类型、描述等信息
 
-### 5. 网页生成 (`web.go`)
+### 5. Web 服务器 (`web.go`)
 
-**功能**: 生成美观的静态 HTML 网页
+**功能**: 通过 HTTP 服务器实时展示监控数据
 
 **实现细节**:
-- 使用 Go 的 `html/template` 生成 HTML
-- 从合约读取最新数据
+- 使用 Go 的 `net/http` 和 `html/template` 提供 Web 服务
+- 服务器运行在 `http://localhost:3000`
+- 从合约读取最新数据并实时更新
+- 使用 `sync.RWMutex` 保护共享数据
 - 按 votes 对 BPoS 节点排序
 - 标注层级 (Tier1: 前25名, Tier2: 25名之后)
 - 显示变更历史
@@ -292,6 +351,10 @@ func (c *RPCClient) Call(method string, params interface{}) (json.RawMessage, er
 - CR 节点列表 (昵称, Public Keys)
 - BPoS 节点列表 (排名, votes, 层级, 选中概率)
 - 变更历史记录
+
+**访问方式**:
+- 打开浏览器访问: `http://localhost:3000`
+- 数据实时更新，无需刷新页面
 
 **样式特点**:
 - 现代化的渐变背景
@@ -585,25 +648,29 @@ chmod +x start.sh
 程序启动后会:
 1. 加载配置并验证
 2. 连接 RPC 和合约
-3. 立即执行一次检查
-4. 生成初始网页
-5. 开始定时任务
+3. 打印钱包地址和余额
+4. 立即执行一次检查
+5. 启动 Web 服务器 (http://localhost:3000)
+6. 开始定时任务
 
 查看日志输出:
 ```
 Monitor started with update interval: 24h0m0s
 CR Pool Address: 0x...
 BPoS Pool Address: 0x...
+Wallet Address: 0x...
+Wallet Balance: 1000000000000000000 wei
 Email notification: true
-Web page generation: true
+Web server: http://localhost:3000
 Performing initial check...
 Starting check at 2024-01-01T12:00:00Z
+Starting web server on http://localhost:3000
 ...
 ```
 
 ### 步骤 8: 查看结果
 
-1. **网页**: 打开 `web/index.html` 查看生成的网页
+1. **Web 界面**: 打开浏览器访问 `http://localhost:3000` 查看实时监控数据
 2. **邮件**: 检查配置的邮箱，应该收到更新通知
 3. **日志**: 查看控制台输出的日志信息
 
@@ -626,6 +693,10 @@ Starting check at 2024-01-01T12:00:00Z
   },
   "email": {
     "enabled": true,
+    "from": {
+      "address": "your_email@gmail.com",
+      "password": "your_app_password"
+    },
     "to": [
       "admin@example.com",
       "monitor@example.com"
@@ -634,10 +705,6 @@ Starting check at 2024-01-01T12:00:00Z
     "smtp": {
       "host": "smtp.gmail.com",
       "port": 587,
-      "username": "your_email@gmail.com",
-      "password": "your_app_password",
-      "from": "your_email@gmail.com",
-      "from_name": "BPoS CR Monitor",
       "tls": true
     }
   },
@@ -647,6 +714,9 @@ Starting check at 2024-01-01T12:00:00Z
   },
   "account": {
     "keystore_path": "./keystore/UTC--2024-01-01T00-00-00.000000000Z--your_address"
+  },
+  "bpos": {
+    "min_dposv2_votes": "80000"
   }
 }
 ```
@@ -665,9 +735,10 @@ Starting check at 2024-01-01T12:00:00Z
 | `email.enabled` | bool | ❌ | 是否启用邮件 (默认: true) |
 | `email.to` | []string | ❌ | 收件人列表 |
 | `email.smtp.*` | - | ❌ | SMTP 服务器配置 |
-| `web.enabled` | bool | ❌ | 是否启用网页 (默认: true) |
-| `web.output_path` | string | ❌ | 网页输出路径 (默认: "./web") |
+| `web.enabled` | bool | ❌ | 是否启用 Web 服务器 (默认: true) |
+| `web.output_path` | string | ❌ | 已废弃 (Web 服务器运行在 localhost:3000) |
 | `account.keystore_path` | string | ✅ | Keystore 文件路径 |
+| `bpos.min_dposv2_votes` | string | ❌ | 最小 DPoS V2 投票数 (默认: "80000") |
 | `-p` (命令行参数) | string | ✅ | Keystore 密码 (通过 `-p` 参数提供) |
 
 ## 🔄 工作流程
@@ -691,12 +762,12 @@ Starting check at 2024-01-01T12:00:00Z
     ├── 如有变化 → 更新合约
     └── 发送邮件通知
     ↓
-生成初始网页
+启动 Web 服务器 (http://localhost:3000)
     ↓
 进入定时循环
     ├── 等待定时器触发
     ├── 执行检查更新
-    ├── 生成网页
+    ├── 更新 Web 数据
     └── 发送邮件
     ↓
 监听系统信号
@@ -716,13 +787,15 @@ Starting check at 2024-01-01T12:00:00Z
     ↓
 检查 BPoS
     ├── RPC: listproducers
+    ├── 过滤: State=Active, active=true, dposv2votes > minVotes
     ├── 合约: getAllNodes
-    ├── 对比: ownerPK, bposPK, NickName, votes
-    └── 如有变化 → updateNodes
+    ├── 对比: nickName, dposPublicKey, votes
+    ├── 构建操作: Add/Update/Remove
+    └── 如有变化 → syncNodes
     ↓
 记录变更历史
     ↓
-生成网页
+更新 Web 服务器数据
     ↓
 发送邮件
 ```
@@ -767,14 +840,28 @@ Starting check at 2024-01-01T12:00:00Z
    - 实现重试和错误处理
 
 4. **数据一致性**:
-   - CR 的 `dposPublicKey`: 当前使用 `code` 字段，如实际场景不同需调整
+   - CR 的 `dposPublicKey`: 从 RPC 的 `code` 字段获取，需要去掉首尾各一个字节
+   - BPoS 的 `dposPublicKey`: 从 RPC 的 `nodepublickey` 字段获取
+   - BPoS 的 `votes`: 使用 `DPoSV2Votes` 字段，不是 `Votes` 字段
    - 确保 RPC 数据和合约数据格式匹配
    - 定期验证数据准确性
 
-5. **邮件配置**:
+5. **BPoS 过滤规则**:
+   - 只更新满足以下条件的节点:
+     - `State` = "Active"
+     - `active` = true
+     - `dposv2votes` > `min_dposv2_votes` (配置项，默认 80000)
+   - 不满足条件的节点不会被更新到合约中
+
+6. **邮件配置**:
    - Gmail 需要使用应用专用密码，不是普通密码
    - 某些邮件服务商可能阻止自动发送
    - 测试邮件配置是否正常工作
+
+7. **Web 服务器**:
+   - Web 服务器运行在 `http://localhost:3000`
+   - 数据实时更新，无需手动刷新
+   - 如果端口被占用，程序会启动失败
 
 ### 故障排查
 
