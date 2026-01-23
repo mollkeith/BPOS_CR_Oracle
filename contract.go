@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -135,6 +136,49 @@ func (c *ContractClient) ContractExists(address common.Address) (bool, error) {
 	}
 	// code 是 hex 字符串，如果为 "0x" 或 "0x0" 表示合约不存在
 	return code != "" && code != "0x" && code != "0x0", nil
+}
+
+// WaitMined 等待交易被打包确认
+// 如果超时，会返回一个特殊错误 ErrTransactionTimeout，调用者可以检查交易状态
+var ErrTransactionTimeout = fmt.Errorf("transaction timeout (may still be pending)")
+
+func (c *ContractClient) WaitMined(ctx context.Context, txHash common.Hash, maxWaitTime time.Duration) (*types.Receipt, error) {
+	timeout := time.After(maxWaitTime)
+	ticker := time.NewTicker(3 * time.Second) // 每 3 秒检查一次
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout:
+			// 超时前最后检查一次，可能刚好在超时前确认了
+			receipt, err := c.crossClient.GetTransactionReceipt(txHash)
+			if err == nil && receipt != nil {
+				if receipt.Status == 0 {
+					return receipt, fmt.Errorf("transaction %s failed", txHash.Hex())
+				}
+				log.Printf("Transaction %s confirmed just before timeout", txHash.Hex())
+				return receipt, nil
+			}
+			// 超时且未确认，返回特殊错误
+			log.Printf("Warning: Transaction %s not confirmed within %v, it may still be pending", txHash.Hex(), maxWaitTime)
+			return nil, fmt.Errorf("%w: %s", ErrTransactionTimeout, txHash.Hex())
+		case <-ticker.C:
+			receipt, err := c.crossClient.GetTransactionReceipt(txHash)
+			if err == nil && receipt != nil {
+				// 检查交易状态
+				if receipt.Status == 0 {
+					return receipt, fmt.Errorf("transaction %s failed", txHash.Hex())
+				}
+				return receipt, nil
+			}
+			// 如果返回 NotFound 错误，说明交易还未被打包，继续等待
+			if err != nil && err != ethereum.NotFound {
+				log.Printf("Error checking transaction receipt: %v", err)
+			}
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 }
 
 // CRNode 表示合约中的 CR 节点

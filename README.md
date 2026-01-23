@@ -545,7 +545,8 @@ cp config.json.example config.json
     "pg_chain": "https://api.elastos.io/pg"
   },
   "update": {
-    "interval": "24h"
+    "interval": "24h"  // 更新间隔，支持格式:
+                       // "30m" = 30分钟, "1h" = 1小时, "1h30m" = 1.5小时, "24h" = 24小时
   },
   ...
   "account": {
@@ -689,7 +690,11 @@ Starting web server on http://localhost:3000
     "pg_chain": "https://api.elastos.io/pg"
   },
   "update": {
-    "interval": "24h"
+    "interval": "24h"  // 更新间隔示例:
+                       // "30m" = 30分钟
+                       // "1h" = 1小时  
+                       // "1h30m" = 1小时30分钟
+                       // "24h" = 24小时
   },
   "email": {
     "enabled": true,
@@ -731,7 +736,7 @@ Starting web server on http://localhost:3000
 | `contracts.bpos_pool_address` | string | ✅ | BPoS 合约地址 |
 | `rpc.main_chain` | string | ✅ | 主链 RPC URL |
 | `rpc.pg_chain` | string | ✅ | PG 链 RPC URL |
-| `update.interval` | string | ❌ | 更新间隔 (默认: "24h") |
+| `update.interval` | string | ❌ | 更新间隔 (默认: "24h")<br/>支持格式: `"30m"` (30分钟), `"1h"` (1小时), `"1h30m"` (1.5小时), `"24h"` (24小时) 等<br/>使用 Go 的 `time.ParseDuration` 格式 |
 | `email.enabled` | bool | ❌ | 是否启用邮件 (默认: true) |
 | `email.to` | []string | ❌ | 收件人列表 |
 | `email.smtp.*` | - | ❌ | SMTP 服务器配置 |

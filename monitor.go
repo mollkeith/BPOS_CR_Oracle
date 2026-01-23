@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -95,7 +97,8 @@ func (m *Monitor) CheckAndUpdate() error {
 	}
 
 	if crChanged || bposChanged {
-		m.lastUpdateTime = time.Now()
+		// lastUpdateTime 在交易确认时已经更新（在 checkAndUpdateCR 或 checkAndUpdateBPoS 中）
+		// 这里只需要记录日志
 		log.Printf("Update completed at %s", m.lastUpdateTime.Format(time.RFC3339))
 	} else {
 		log.Printf("No changes detected")
@@ -169,13 +172,32 @@ func (m *Monitor) checkAndUpdateCR() (bool, error) {
 		return false, fmt.Errorf("failed to call setNodes: %w", err)
 	}
 
-	log.Printf("CR update transaction sent: %s", txHash.Hex())
+	log.Printf("CR update transaction sent: %s, waiting for confirmation...", txHash.Hex())
 
-	// 记录变更
+	// 等待交易确认（最多等待 5 分钟）
+	ctx := context.Background()
+	receipt, err := m.contractClient.WaitMined(ctx, txHash, 5*time.Minute)
+	if err != nil {
+		// 检查是否是超时错误（交易可能还在 pending）
+		// 使用 errors.Is 检查错误链中是否包含 ErrTransactionTimeout
+		if errors.Is(err, ErrTransactionTimeout) {
+			log.Printf("Warning: CR transaction %s timeout, but it may still be pending. Will check status on next update cycle.", txHash.Hex())
+			// 不返回错误，允许继续执行，下次检查时会发现数据已更新（如果交易确认了）
+			// 如果交易未确认，下次检查时会发现数据不一致，会再次尝试更新
+			return false, nil // 返回 false 表示本次未完成更新，但不阻止后续检查
+		}
+		return false, fmt.Errorf("failed to wait for transaction confirmation: %w", err)
+	}
+
+	log.Printf("CR update transaction confirmed: %s (block: %d, status: %d)", txHash.Hex(), receipt.BlockNumber.Uint64(), receipt.Status)
+
+	// 记录变更（使用交易确认时间）
+	confirmTime := time.Now()
+	m.lastUpdateTime = confirmTime
 	m.changeHistory = append(m.changeHistory, ChangeRecord{
-		Time:        time.Now(),
+		Time:        confirmTime,
 		Type:        "CR",
-		Description: fmt.Sprintf("Updated %d CR nodes", len(rpcCRs)),
+		Description: fmt.Sprintf("Updated %d CR nodes (tx: %s)", len(rpcCRs), txHash.Hex()),
 		Details:     rpcCRs,
 	})
 
@@ -329,7 +351,24 @@ func (m *Monitor) checkAndUpdateBPoS() (bool, error) {
 		return false, fmt.Errorf("failed to call syncNodes: %w", err)
 	}
 
-	log.Printf("BPoS sync transaction sent: %s", txHash.Hex())
+	log.Printf("BPoS sync transaction sent: %s, waiting for confirmation...", txHash.Hex())
+
+	// 等待交易确认（最多等待 5 分钟）
+	ctx := context.Background()
+	receipt, err := m.contractClient.WaitMined(ctx, txHash, 5*time.Minute)
+	if err != nil {
+		// 检查是否是超时错误（交易可能还在 pending）
+		// 使用 errors.Is 检查错误链中是否包含 ErrTransactionTimeout
+		if errors.Is(err, ErrTransactionTimeout) {
+			log.Printf("Warning: BPoS transaction %s timeout, but it may still be pending. Will check status on next update cycle.", txHash.Hex())
+			// 不返回错误，允许继续执行，下次检查时会发现数据已更新（如果交易确认了）
+			// 如果交易未确认，下次检查时会发现数据不一致，会再次尝试更新
+			return false, nil // 返回 false 表示本次未完成更新，但不阻止后续检查
+		}
+		return false, fmt.Errorf("failed to wait for transaction confirmation: %w", err)
+	}
+
+	log.Printf("BPoS sync transaction confirmed: %s (block: %d, status: %d)", txHash.Hex(), receipt.BlockNumber.Uint64(), receipt.Status)
 
 	// 统计操作类型
 	addCount := 0
@@ -346,11 +385,13 @@ func (m *Monitor) checkAndUpdateBPoS() (bool, error) {
 		}
 	}
 
-	// 记录变更
+	// 记录变更（使用交易确认时间）
+	confirmTime := time.Now()
+	m.lastUpdateTime = confirmTime
 	m.changeHistory = append(m.changeHistory, ChangeRecord{
-		Time:        time.Now(),
+		Time:        confirmTime,
 		Type:        "BPoS",
-		Description: fmt.Sprintf("Synced BPoS nodes: %d Add, %d Update, %d Remove (filtered from %d total)", addCount, updateCount, removeCount, len(rpcProducers)),
+		Description: fmt.Sprintf("Synced BPoS nodes: %d Add, %d Update, %d Remove (filtered from %d total, tx: %s)", addCount, updateCount, removeCount, len(rpcProducers), txHash.Hex()),
 		Details:     filteredProducers,
 	})
 

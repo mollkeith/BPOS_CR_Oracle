@@ -73,20 +73,19 @@ func main() {
 	log.Printf("Email notification: %v", config.Email.Enabled)
 	log.Printf("Web page generation: %v", config.Web.Enabled)
 
-	// 立即执行一次检查和更新
-	log.Println("Performing initial check...")
-	if err := performCheckAndUpdate(monitor, emailService); err != nil {
-		log.Printf("Initial check failed: %v", err)
-	}
-
-	// 启动 Web 服务器
+	// 启动 Web 服务器（先启动，即使没有数据也能访问）
 	if err := monitor.StartWebServer(); err != nil {
 		log.Printf("Failed to start web server: %v", err)
 	}
 
-	// 生成初始网页数据
-	if err := monitor.GenerateWebPage(); err != nil {
-		log.Printf("Failed to generate initial web page: %v", err)
+	// 立即执行一次检查和更新（会在交易确认后更新 web 页面）
+	log.Println("Performing initial check...")
+	if err := performCheckAndUpdate(monitor, emailService); err != nil {
+		log.Printf("Initial check failed: %v", err)
+		// 即使失败也生成一次初始网页数据
+		if err := monitor.GenerateWebPage(); err != nil {
+			log.Printf("Failed to generate initial web page: %v", err)
+		}
 	}
 
 	// 设置定时器
@@ -102,13 +101,9 @@ func main() {
 		select {
 		case <-ticker.C:
 			log.Println("Scheduled check triggered...")
+			// performCheckAndUpdate 内部会在交易确认后更新 web 页面
 			if err := performCheckAndUpdate(monitor, emailService); err != nil {
 				log.Printf("Scheduled check failed: %v", err)
-			}
-
-			// 更新网页数据
-			if err := monitor.GenerateWebPage(); err != nil {
-				log.Printf("Failed to update web page data: %v", err)
 			}
 
 		case sig := <-sigChan:
@@ -131,6 +126,11 @@ func performCheckAndUpdate(monitor *Monitor, emailService *EmailService) error {
 		// 发送错误邮件
 		emailService.SendUpdateEmail(monitor, false, err.Error())
 		return err
+	}
+
+	// 交易确认后，更新 web 页面数据
+	if err := monitor.GenerateWebPage(); err != nil {
+		log.Printf("Failed to update web page data: %v", err)
 	}
 
 	return nil
