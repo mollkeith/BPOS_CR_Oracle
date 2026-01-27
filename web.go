@@ -13,29 +13,29 @@ import (
 )
 
 type WebData struct {
-	CRNodes          []CRNodeDisplay
-	BPoSNodes        []BPoSNodeDisplay
-	HasChangesToday  bool
-	LastCheckTime    string
-	LastUpdateTime   string
-	ChangeHistory    []ChangeRecordDisplay
-	UpdateTime       string
+	CRNodes         []CRNodeDisplay
+	BPoSNodes       []BPoSNodeDisplay
+	HasChangesToday bool
+	LastCheckTime   string
+	LastUpdateTime  string
+	ChangeHistory   []ChangeRecordDisplay
+	UpdateTime      string
 }
 
 type CRNodeDisplay struct {
-	NickName      string
+	NickName       string
 	OwnerPublicKey string
 	DPoSPublicKey  string
 }
 
 type BPoSNodeDisplay struct {
-	NickName      string
+	NickName       string
 	OwnerPublicKey string
 	DPoSPublicKey  string
-	Votes         string
-	Rank          int
-	Tier          string // "Tier1" (前25名) or "Tier2" (25名之后)
-	SelectionProb string // 选中概率
+	Votes          string
+	Rank           int
+	Tier           string // "Tier1" (前25名) or "Tier2" (25名之后)
+	SelectionProb  string // 选中概率
 }
 
 type ChangeRecordDisplay struct {
@@ -46,6 +46,33 @@ type ChangeRecordDisplay struct {
 
 // GenerateWebPage 更新网页数据（用于 HTTP 服务器）
 func (m *Monitor) GenerateWebPage() error {
+	return m.generateWebPageInternal()
+}
+
+// GenerateWebPageWithRetry 带重试机制的更新网页数据
+func (m *Monitor) GenerateWebPageWithRetry(maxRetries int, retryDelay time.Duration) error {
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		if i > 0 {
+			log.Printf("Retrying web page update (attempt %d/%d)...", i+1, maxRetries)
+			time.Sleep(retryDelay)
+		}
+
+		err := m.generateWebPageInternal()
+		if err == nil {
+			if i > 0 {
+				log.Printf("Web page update succeeded on retry %d", i+1)
+			}
+			return nil
+		}
+		lastErr = err
+		log.Printf("Web page update attempt %d failed: %v", i+1, err)
+	}
+	return fmt.Errorf("failed after %d retries: %w", maxRetries, lastErr)
+}
+
+// generateWebPageInternal 内部实现：更新网页数据
+func (m *Monitor) generateWebPageInternal() error {
 	// 检查是否启用网页生成
 	if !m.config.Web.Enabled {
 		return nil
@@ -62,11 +89,22 @@ func (m *Monitor) GenerateWebPage() error {
 		return fmt.Errorf("failed to get BPoS nodes: %w", err)
 	}
 
+	log.Printf("Updating web page: CR nodes=%d, BPoS nodes=%d", len(crNodes), len(bposNodes))
+
+	// 打印 BPoS 节点详情（用于调试）
+	for i, node := range bposNodes {
+		if i < 5 || i >= len(bposNodes)-2 { // 只打印前5个和后2个
+			log.Printf("  BPoS[%d]: Nickname=%s, Votes=%s", i, node.NickName, node.Votes.String())
+		} else if i == 5 {
+			log.Printf("  ... (showing first 5 and last 2 nodes)")
+		}
+	}
+
 	// 转换为显示格式
 	crDisplay := make([]CRNodeDisplay, len(crNodes))
 	for i, node := range crNodes {
 		crDisplay[i] = CRNodeDisplay{
-			NickName:      node.NickName,
+			NickName:       node.NickName,
 			OwnerPublicKey: hex.EncodeToString(node.OwnerPublicKey),
 			DPoSPublicKey:  hex.EncodeToString(node.DPoSPublicKey),
 		}
@@ -84,13 +122,13 @@ func (m *Monitor) GenerateWebPage() error {
 		}
 
 		bposDisplay[i] = BPoSNodeDisplay{
-			NickName:      node.NickName,
+			NickName:       node.NickName,
 			OwnerPublicKey: hex.EncodeToString(node.OwnerPublicKey),
 			DPoSPublicKey:  hex.EncodeToString(node.DPoSPublicKey),
-			Votes:         votesStr,
-			Rank:          i + 1,
-			Tier:          tier,
-			SelectionProb: prob,
+			Votes:          votesStr,
+			Rank:           i + 1,
+			Tier:           tier,
+			SelectionProb:  prob,
 		}
 	}
 
@@ -160,8 +198,22 @@ func (m *Monitor) StartWebServer() error {
 
 		htmlContent := generateHTML(*data)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		// 防止浏览器缓存，确保每次访问都获取最新数据
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(htmlContent))
+	})
+
+	// 添加手动刷新端点
+	http.HandleFunc("/refresh", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Manual refresh requested from %s", r.RemoteAddr)
+		if err := m.GenerateWebPageWithRetry(3, 2*time.Second); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to refresh: %v", err), http.StatusInternalServerError)
+			return
+		}
+		http.Redirect(w, r, "/", http.StatusFound)
 	})
 
 	addr := ":3000"
@@ -179,7 +231,7 @@ func formatVotes(votes *big.Int) string {
 	if votes == nil {
 		return "0.00000000"
 	}
-	
+
 	// 转换为字符串,假设有8位小数
 	votesStr := votes.String()
 	if len(votesStr) <= 8 {
@@ -189,7 +241,7 @@ func formatVotes(votes *big.Int) string {
 		}
 		return "0." + votesStr
 	}
-	
+
 	// 插入小数点
 	integerPart := votesStr[:len(votesStr)-8]
 	decimalPart := votesStr[len(votesStr)-8:]
@@ -458,4 +510,3 @@ func generateHTML(data WebData) string {
 
 	return buf.String()
 }
-

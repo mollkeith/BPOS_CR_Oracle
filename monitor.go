@@ -307,8 +307,8 @@ func (m *Monitor) checkAndUpdateBPoS() (bool, error) {
 	// 过滤满足条件的生产者
 	filteredProducers := make([]Producer, 0, len(rpcProducers))
 	for _, producer := range rpcProducers {
-		// 过滤条件：State == "Active", active == true, dposv2votes > 80000
-		if producer.State != "Active" || !producer.Active {
+		// 过滤条件：State == Active or Inactive or Illegal and dposv2votes > 80000
+		if producer.State != "Active" && producer.State != "Inactive" && producer.State != "Illegal" {
 			continue
 		}
 

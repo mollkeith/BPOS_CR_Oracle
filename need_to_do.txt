@@ -37,7 +37,7 @@ email列表：[abc@gamil.com, def@qq.com] 等信息，详细见第4标题 email�
 
 4. 邮件提醒
     每天将提交信息发邮件到邮件地址，提交出错也需要发送，因为可能没有balance等情况
-    配置参考：但是需要考虑安全性，不能把死吗啥的放代码里，只能是config文件里，config最好是config.json这样的格式
+    配置参考：但是需要考虑安全性，不能私钥啥的放代码里，只能是config文件里，config最好是config.json这样的格式
     "enabled": true,
     "from": {
       "address": "noreply@belayer2.org",

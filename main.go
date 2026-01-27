@@ -128,9 +128,16 @@ func performCheckAndUpdate(monitor *Monitor, emailService *EmailService) error {
 		return err
 	}
 
-	// 交易确认后，更新 web 页面数据
-	if err := monitor.GenerateWebPage(); err != nil {
-		log.Printf("Failed to update web page data: %v", err)
+	// 交易确认后，等待一小段时间让合约状态完全更新，然后再更新 web 页面数据
+	// 等待 3 秒，确保 RPC 节点已经同步到最新状态
+	log.Printf("Waiting 3 seconds for contract state to sync before updating web page...")
+	time.Sleep(3 * time.Second)
+
+	// 更新 web 页面数据，带重试机制
+	if err := monitor.GenerateWebPageWithRetry(3, 2*time.Second); err != nil {
+		log.Printf("Failed to update web page data after retries: %v", err)
+	} else {
+		log.Printf("Web page data updated successfully")
 	}
 
 	return nil
