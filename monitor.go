@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"strings"
 	"sync"
 	"time"
 )
@@ -307,14 +308,18 @@ func (m *Monitor) checkAndUpdateBPoS() (bool, error) {
 	// 过滤满足条件的生产者
 	filteredProducers := make([]Producer, 0, len(rpcProducers))
 	for _, producer := range rpcProducers {
-		// 过滤条件：State == Active or Inactive or Illegal and dposv2votes > 80000
-		if producer.State != "Active" && producer.State != "Inactive" && producer.State != "Illegal" {
+		// 过滤条件：State == Active or Inactive or Illegal and dposv2votes > min
+		// 使用大小写不敏感比较，兼容 RPC 返回 "inactive" 等小写值
+		stateNorm := strings.ToLower(strings.TrimSpace(producer.State))
+		if stateNorm != "active" && stateNorm != "inactive" && stateNorm != "illegal" {
+			log.Printf("Warning: Node %s is not active, inactive, or illegal, skipping, state: %s", producer.Nickname, producer.State)
 			continue
 		}
 
 		// 解析 dposv2votes 并检查是否 > 配置的最小值
 		dposv2Votes, err := parseVotes(producer.DPoSV2Votes)
 		if err != nil {
+			log.Printf("Warning: failed to parse dposv2votes for producer %s: %v, skipping", producer.Nickname, err)
 			continue
 		}
 
@@ -325,17 +330,25 @@ func (m *Monitor) checkAndUpdateBPoS() (bool, error) {
 			minVotes = big.NewInt(8000000000000) // 默认 80000 * 10^8
 		}
 		if dposv2Votes.Cmp(minVotes) <= 0 {
+			log.Printf("Warning: Node %s has less than %d votes, skipping, votes: %s", producer.Nickname, minVotes, dposv2Votes.String())
 			continue
 		}
 
 		filteredProducers = append(filteredProducers, producer)
 	}
 
+	// print filtered producers
+	log.Printf("Filtered BPoS producers: %d out of %d meet criteria (State=Active/Inactive/Illegal, dposv2votes>%s)", len(filteredProducers), len(rpcProducers), m.config.BPoS.MinDPoSV2Votes)
+	for i, producer := range filteredProducers {
+		log.Printf("  Filtered BPoS[%d]: Nickname=%s, OwnerPK=%s, NodePK=%s, Votes=%s, DPoSV2Votes=%s, State=%s, Active=%v",
+			i, producer.Nickname, producer.OwnerPublicKey, producer.NodePublicKey, producer.Votes, producer.DPoSV2Votes, producer.State, producer.Active)
+	}
+
 	minVotesStr := m.config.BPoS.MinDPoSV2Votes
 	if minVotesStr == "" {
 		minVotesStr = "80000"
 	}
-	log.Printf("Filtered BPoS producers: %d out of %d meet criteria (State=Active, active=true, dposv2votes>%s)", len(filteredProducers), len(rpcProducers), minVotesStr)
+	log.Printf("Filtered BPoS producers: %d out of %d meet criteria (State=Active/Inactive/Illegal, dposv2votes>%s)", len(filteredProducers), len(rpcProducers), minVotesStr)
 
 	// 构建操作列表 - 比较 RPC 和合约数据，确定 OperationType
 	operations := m.buildNodeOperations(filteredProducers, contractNodes)
@@ -499,11 +512,10 @@ func (m *Monitor) buildNodeOperations(rpcProducers []Producer, contractNodes []B
 		})
 	}
 
-	// 2. 处理合约中存在但 RPC 中不存在的节点：Remove
+	// 2. 处理合约中存在但 RPC 中不存在的节点：Remove（含投票不足的节点）
 	for _, contractNode := range contractNodes {
 		key := hex.EncodeToString(contractNode.OwnerPublicKey)
 		if _, exists := rpcMap[key]; !exists {
-			// 合约中存在但 RPC 中不存在，需要 Remove
 			operations = append(operations, NodeOperation{
 				NickName:       contractNode.NickName,
 				OwnerPublicKey: contractNode.OwnerPublicKey,
